@@ -1,2 +1,2 @@
 # TSViT-Adaption
-try to user TSViT into adpation 
+Try to user TSViT into adpation.
