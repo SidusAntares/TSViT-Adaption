@@ -46,13 +46,6 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
         with torch.no_grad():
             for step, sample in enumerate(evalloader):
 
-                # 测试光谱通道数为 1 情况，考虑还有个时间通道进入模型后会剥离
-                # pastis
-                # mean = sample['inputs'][:,:,:,:,:10].mean(dim = -1,keepdim = True)
-                # sample['inputs'] = torch.cat(( mean,sample['inputs'][:,:,:,:,10].unsqueeze(-1) ), dim = -1)
-                # germany
-                mean = sample['inputs'][:, :, :, :, :13].mean(dim=-1, keepdim=True)
-                sample['inputs'] = torch.cat((mean, sample['inputs'][:, :, :, :, 14].unsqueeze(-1)), dim=-1)
 
                 logits = net(sample['inputs'].to(device))
                 logits = logits.permute(0, 2, 3, 1)
