@@ -19,6 +19,12 @@ MODEL:
 
 TRANSFER: True
 
+DA_SOLVER:
+  beta_cluster: 0.1        # L_cluster 损失的权重
+  lambda_entropy: 0.0      # 目标域熵最小化损失的权重 (可选)
+  cluster_update_freq: 1   # 每隔多少个 epoch 更新一次聚类中心
+  num_clusters: 20
+  
 DATASETS:
   src:
     train:
