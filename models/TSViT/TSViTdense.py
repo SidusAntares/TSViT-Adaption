@@ -8,14 +8,15 @@ import numpy as np
 from utils.config_files_utils import get_params_values
 
 class SEBlock(nn.Module):
-    def __init__(self, channel, reduction=16):
+    def __init__(self, model_config):
         super(SEBlock, self).__init__()
-        self.channel = channel
+        self.channel = model_config['num_classes']
         self.squeeze = nn.AdaptiveAvgPool2d((1, 1))
+        reduction=16
         self.excitation = nn.Sequential(
-            nn.Linear(channel, channel // reduction, bias=False),
+            nn.Linear(self.channel, self.channell // reduction, bias=False),
             nn.ReLU(inplace=True),
-            nn.Linear(channel // reduction, channel, bias=False),
+            nn.Linear(self.channel // reduction, self.channel, bias=False),
             nn.Sigmoid()
         )
 
