@@ -26,16 +26,19 @@ import glob
 
 
 def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin_cls=False):
-    def train_step(net, sample, loss_fn, optimizer, device, loss_input_fn):
+    def train_step(net, src_sample,trg_sample, loss_fn, optimizer, device, loss_input_fn,lambda_mmd):
         optimizer.zero_grad()
         # print(sample['inputs'].shape)
-        outputs = net(sample['inputs'].to(device))
-        outputs = outputs.permute(0, 2, 3, 1)
-        ground_truth = loss_input_fn(sample, device)
-        loss = loss_fn['mean'](outputs, ground_truth)
+        src_outputs ,src_da_features = net(src_sample['inputs'].to(device))
+        _,trg_da_features = net(trg_sample['inputs'].to(device))
+        src_outputs = src_outputs.permute(0, 2, 3, 1)
+        ground_truth = loss_input_fn(src_sample, device)
+        loss1 = loss_fn['mean'](src_outputs, ground_truth)
+        loss2 = loss_fn['mmd'](src_da_features, trg_da_features)
+        loss = loss1 + lambda_mmd*loss2
         loss.backward()
         optimizer.step()
-        return outputs, ground_truth, loss
+        return src_outputs, ground_truth, loss
 
     def evaluate(net, evalloader, loss_fn, config):
         num_classes = config['MODEL']['num_classes']
@@ -47,7 +50,7 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
             for step, sample in enumerate(evalloader):
 
 
-                logits = net(sample['inputs'].to(device))
+                logits, _ = net(sample['inputs'].to(device))
                 logits = logits.permute(0, 2, 3, 1)
                 _, predicted = torch.max(logits.data, -1)
                 ground_truth = loss_input_fn(sample, device)
@@ -107,7 +110,7 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
     save_path = config['CHECKPOINT']["save_path"]
     checkpoint = config['CHECKPOINT']["load_from_checkpoint"]
     save_epoch_interval = config['CHECKPOINT']["save_epoch_interval"]
-    num_steps_train = len(dataloaders['train'])
+    num_steps_train = min(len(src_dataloaders['train']),len(trg_dataloaders['train']))
     local_device_ids = config['local_device_ids']
     weight_decay = get_params_values(config['SOLVER'], "weight_decay", 0)
     folder_name = os.path.basename(os.path.dirname(args.config))
@@ -179,28 +182,22 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
     net.to(device)
 
     loss_input_fn = get_loss_data_input(config)
+    loss_lambda_mmd = config['SOLVER']['loss_lambda_mmd']
 
     loss_fn = {'all': get_loss(config, device, reduction=None),
-               'mean': get_loss(config, device, reduction="mean")}
+               'mean': get_loss(config, device, reduction="mean"),
+               'mmd': get_loss(config, device, reduction="mean")}
 
     net.train()
     for epoch in range(start_epoch, start_epoch + num_epochs):  # loop over the dataset multiple times
         epoch_train_loss = 0.0
         num_train_batches = 0
         joint_loaders = enumerate(zip(src_dataloaders,trg_dataloaders))
-        for step, sample in joint_loaders:
-
-            # 测试光谱通道数为 1 情况，考虑还有个时间通道进入模型后会剥离
-            # pastis
-            # mean = sample['inputs'][:,:,:,:,:10].mean(dim = -1,keepdim = True)
-            # sample['inputs'] = torch.cat(( mean,sample['inputs'][:,:,:,:,10].unsqueeze(-1) ), dim = -1)
-            # germany
-            mean = sample['inputs'][:, :, :, :, :13].mean(dim=-1, keepdim=True)
-            sample['inputs'] = torch.cat((mean, sample['inputs'][:, :, :, :, 14].unsqueeze(-1)), dim=-1)
+        for step, (src_sample,trg_sample) in joint_loaders:
 
             abs_step = start_global + (epoch - start_epoch) * num_steps_train + step
-            logits, ground_truth, loss = train_step(net, sample, loss_fn, optimizer, device,
-                                                    loss_input_fn=loss_input_fn)
+            logits, ground_truth, loss = train_step(net, src_sample,trg_sample, loss_fn, optimizer, device,
+                                                    loss_input_fn=loss_input_fn,lambda_mmd=loss_lambda_mmd)
             if len(ground_truth) == 2:
                 labels, unk_masks = ground_truth
             else:
@@ -227,7 +224,7 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
 
         avg_train_loss = epoch_train_loss / num_train_batches if num_train_batches > 0 else 0.0
         print(f"\nRunning Evaluation at End of Epoch {epoch}")
-        eval_metrics = evaluate(net, dataloaders['eval'], loss_fn, config)
+        eval_metrics = evaluate(net, trg_dataloaders['eval'], loss_fn, config)
         macro_iou = eval_metrics[1]['macro']['IOU']
         micro_iou = eval_metrics[1]['micro']['IOU']
         accuracy = eval_metrics[1]['macro']['Accuracy']

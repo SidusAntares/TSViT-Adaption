@@ -51,7 +51,7 @@ SOLVER:
   num_warmup_epochs: 10
   steps: (0, 80000)
   loss_function:  masked_cross_entropy
-  loss_lambda: 0.5
+  loss_lambda_mmd: 0.5
   class_weights:
   lr_scheduler: 'cosine'
   lr_base: 1e-3

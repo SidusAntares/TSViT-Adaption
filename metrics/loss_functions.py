@@ -22,26 +22,8 @@ def get_loss(config, device, reduction='mean'):
             loss_fun.append(get_loss(config_, device, reduction=reduction))
         return loss_fun
 
-    # Contrastive Loss -----------------------------------------------------------------------
-    if loss_config['loss_function'] in ['contrastive_loss', 'masked_contrastive_loss']:
-        pos_weight = get_params_values(config['SOLVER'], 'pos_weight', 1.0)
-        print("cscl positive weight: ", pos_weight)
-        return MaskedContrastiveLoss(pos_weight=pos_weight, reduction=reduction)
-
-    # Binary Cross-Entropy Loss -----------------------------------------------------------
-    if loss_config['loss_function'] == 'binary_cross_entropy':
-        if reduction is None:
-            reduction = 'none'
-        return nn.BCEWithLogitsLoss(reduction=reduction)
-
-    if loss_config['loss_function'] == 'masked_binary_cross_entropy':
-        pos_weight = config['SOLVER']['pos_weight']
-        if pos_weight is not None:
-            pos_weight = torch.tensor(pos_weight)
-        return MaskedBinaryCrossEntropy(reduction=reduction, pos_weight=pos_weight)
-
     # Cross-Entropy Loss ------------------------------------------------------------------
-    elif loss_config['loss_function'] == 'cross_entropy':
+    if loss_config['loss_function'] == 'cross_entropy':
         num_classes = get_params_values(model_config, 'num_classes', None)
         weight = torch.Tensor(num_classes * [1.0]).to(device)
         if loss_config['class_weights'] not in [None, {}]:
@@ -53,22 +35,9 @@ def get_loss(config, device, reduction='mean'):
     elif loss_config['loss_function'] == 'masked_cross_entropy':
         mean = reduction == 'mean'
         return MaskedCrossEntropyLoss(mean=mean)
-    
-    # Focal Loss --------------------------------------------------------------------------
-    elif loss_config['loss_function'] in ['focal_loss', 'masked_focal_loss']:
-        gamma = get_params_values(loss_config, "gamma", 1.0)
-        try:
-            alpha = get_params_values(loss_config, "alpha", None)
-        except ValueError:
-            alpha = None
-        if loss_config['loss_function'] == 'focal_loss':
-            return FocalLoss(gamma=gamma, alpha=alpha, reduction=reduction)
-        elif loss_config['loss_function'] == 'masked_focal_loss':
-            return MaskedFocalLoss(gamma=gamma, alpha=alpha, reduction=reduction)
 
-    # Masked Multiclass Loss -----------------------------------------------------------
-    elif loss_config['loss_function'] == 'masked_dice_loss':
-        return MaskedDiceLoss(reduction=reduction)
+    else:return MMDLoss(kernel_type='rbf', kernel_mul=2.0, kernel_num=5)
+
 
 
 def per_class_loss(criterion, logits, labels, unk_masks, n_classes):
@@ -335,3 +304,152 @@ class FocalLoss(nn.Module):
         else:
             raise ValueError(
                 "FocalLoss: reduction parameter not in list of acceptable values [\"mean\", \"sum\", None]")
+
+class MMDLoss(nn.Module):
+    """
+    计算 Maximum Mean Discrepancy (MMD) 损失，使用 RBF (Gaussian) 核。
+
+    该类继承自 nn.Module，可以像其他损失函数一样在模型中使用。
+    """
+
+    def __init__(self, kernel_type='rbf', kernel_mul=2.0, kernel_num=5, fix_sigma=None, linear_blind=False):
+        """
+        初始化 MMD 损失计算器。
+
+        Args:
+            kernel_type (str, optional): 核函数类型 ('rbf' 或 'linear')。默认为 'rbf'。
+            kernel_mul (float, optional): RBF 核的带宽参数 multiplier。默认为 2.0。
+            kernel_num (int, optional): RBF 核的数量。默认为 5。
+            fix_sigma (float, optional): 固定的 RBF 核带宽 sigma。如果为 None，则根据数据自动计算。默认为 None。
+            linear_blind (bool, optional): 是否在线性核计算中忽略对角线元素（避免过拟合方差项）。默认为 False。
+                                       (主要用于 linear 核)
+        """
+        super(MMDLoss, self).__init__()
+        self.kernel_type = kernel_type
+        self.kernel_mul = kernel_mul
+        self.kernel_num = kernel_num
+        self.fix_sigma = fix_sigma
+        self.linear_blind = linear_blind
+
+    def gaussian_kernel(self, source, target, kernel_mul=2.0, kernel_num=5, fix_sigma=None):
+        """
+        计算 Gaussian (RBF) 核矩阵。
+
+        Args:
+            source (Tensor): 源域特征 (Ns, D)
+            target (Tensor): 目标域特征 (Nt, D)
+            kernel_mul (float): 带宽 multiplier.
+            kernel_num (int): 核数量.
+            fix_sigma (float, optional): 固定带宽.
+
+        Returns:
+            Tensor: 联合核矩阵 (Ns+Nt, Ns+Nt).
+        """
+        n_samples = int(source.size()[0]) + int(target.size()[0])
+        total = torch.cat([source, target], dim=0) # (Ns+Nt, D)
+
+        # 计算 L2 距离平方矩阵 ||x_i - x_j||^2
+        total0 = total.unsqueeze(0).expand(n_samples, n_samples, -1) # (Ns+Nt, Ns+Nt, D)
+        total1 = total.unsqueeze(1).expand(n_samples, n_samples, -1) # (Ns+Nt, Ns+Nt, D)
+        # L2_distance[i, j] = ||total[i] - total[j]||^2
+        L2_distance = ((total0 - total1) ** 2).sum(2) # (Ns+Nt, Ns+Nt)
+
+        if fix_sigma is not None:
+            bandwidth = fix_sigma
+        else:
+            # 根据中位数距离估计带宽
+            # 只考虑非零距离，避免自己和自己比较 (对角线为0)
+            distances = L2_distance[L2_distance.ne(0)]
+            if distances.numel() > 0:
+                bandwidth = torch.median(distances)
+                # 为避免 bandwidth 为 0 或过小导致梯度消失/爆炸，加一个小量
+                bandwidth = bandwidth + 1e-6
+            else:
+                bandwidth = 1.0 # fallback, should not happen with different samples
+
+        # 生成多个尺度的核
+        bandwidth /= kernel_mul ** (kernel_num // 2)
+        bandwidth_list = [bandwidth * (kernel_mul ** i) for i in range(kernel_num)]
+
+        # 计算 exp(-||x_i - x_j||^2 / sigma)
+        kernel_val = [torch.exp(-L2_distance / bandwidth_temp) for bandwidth_temp in bandwidth_list]
+
+        # 将所有核加起来
+        return sum(kernel_val) # (Ns+Nt, Ns+Nt)
+
+    def linear_kernel(self, source, target, blind=False):
+        """
+        计算 Linear 核矩阵 (内积)。
+
+        Args:
+            source (Tensor): 源域特征 (Ns, D)
+            target (Tensor): 目标域特征 (Nt, D)
+            blind (bool): 是否忽略对角线元素。
+
+        Returns:
+            Tensor: 线性核矩阵 (Ns+Nt, Ns+Nt).
+        """
+        n_s = int(source.size()[0])
+        n_t = int(target.size()[0])
+        total = torch.cat([source, target], dim=0)  # (Ns+Nt, D)
+
+        # 计算内积 <x_i, x_j>
+        kernel_val = torch.mm(total, total.T) # (Ns+Nt, Ns+Nt)
+
+        if blind:
+            # 创建掩码，排除对角线元素
+            n_total = n_s + n_t
+            mask = 1 - torch.eye(n_total, dtype=torch.uint8, device=kernel_val.device)
+            # 或者使用 float mask: mask = 1 - torch.eye(...).float()
+            # kernel_val = kernel_val * mask.float() / mask.float().mean() # Normalize?
+            # 更简单地，直接返回非对角线元素的平均似乎不太合适
+            # 通常 blind 用于经验协方差估计，这里直接返回矩阵
+            pass # Blind logic is tricky here for MMD; usually applied differently.
+            # For simplicity in this context, we'll just return the full matrix.
+            # If needed, downstream processing can apply the blind mask.
+
+        return kernel_val
+
+    def forward(self, source, target):
+        """
+        计算 MMD 损失。
+
+        Args:
+            source (Tensor): 源域特征，形状 (N_source, D)。
+            target (Tensor): 目标域特征，形状 (N_target, D)。
+
+        Returns:
+            Tensor: 标量 MMD 损失值。
+        """
+        batch_size_source = int(source.size()[0])
+        batch_size_target = int(target.size()[0])
+
+        if self.kernel_type == 'rbf':
+            kernels = self.gaussian_kernel(
+                source, target, kernel_mul=self.kernel_mul, kernel_num=self.kernel_num, fix_sigma=self.fix_sigma
+            )
+        elif self.kernel_type == 'linear':
+            kernels = self.linear_kernel(source, target, blind=self.linear_blind)
+        else:
+            raise ValueError(f"Unsupported kernel type: {self.kernel_type}")
+
+        # 分割联合核矩阵
+        # kernels = [[K_ss, K_st],
+        #            [K_ts, K_tt]]
+        XX = kernels[:batch_size_source, :batch_size_source]  # Source-Source
+        YY = kernels[batch_size_source:, batch_size_source:]  # Target-Target
+        XY = kernels[:batch_size_source, batch_size_source:]  # Source-Target
+        YX = kernels[batch_size_source:, :batch_size_source]  # Target-Source
+
+        # loss = torch.mean(XX + YY - XY - YX) # This is also common and simpler
+        # More explicitly calculating means:
+        E_XX = torch.mean(XX)
+        E_YY = torch.mean(YY)
+        E_XY = torch.mean(XY)
+        E_YX = torch.mean(YX) # Note: E_YX = E_XY for symmetric kernels like RBF/Linear
+
+        mmd_loss = E_XX + E_YY - E_XY - E_YX
+
+        # MMD^2 should be non-negative. Clamp it to avoid numerical issues leading to small negatives.
+        # Although mathematically >= 0, numerics can cause tiny negative values.
+        return torch.clamp(mmd_loss, min=0.0)
