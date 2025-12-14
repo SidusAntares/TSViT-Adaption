@@ -114,8 +114,9 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
     local_device_ids = config['local_device_ids']
     weight_decay = get_params_values(config['SOLVER'], "weight_decay", 0)
     folder_name = os.path.basename(os.path.dirname(args.config))
-    base_dir = "/data/user/ViT/D3/metric_save/"
+    base_dir = "./metric_save/"
     folder_dir = os.path.join(base_dir, folder_name)
+    os.makedirs(base_dir,exist_ok=True)
 
     start_global = 1
     start_epoch = 1
