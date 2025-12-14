@@ -8,40 +8,59 @@ import numpy as np
 from utils.config_files_utils import get_params_values
 
 class SEBlock(nn.Module):
-    def __init__(self, channel,reduction=6):
+    def __init__(self, channel1, channel2 ,reduction1=6, reduction2=16):
         super(SEBlock, self).__init__()
 
-        self.channel = channel
+        self.channel1 = channel1
+        self.channel2 = channel2
         self.squeeze = nn.AdaptiveAvgPool1d(1)
-        self.reduction=reduction
-        self.excitation = nn.Sequential(
-            nn.Linear(self.channel, self.channel // self.reduction, bias=False),
+        self.reduction1=reduction1
+        self.reduction2=reduction2
+        self.excitation1 = nn.Sequential(
+            nn.Linear(self.channel1, self.channel1 // self.reduction1, bias=False),
             nn.ReLU(inplace=True),
-            nn.Linear(self.channel // self.reduction, self.channel, bias=False),
+            nn.Linear(self.channel1 // self.reduction1, self.channel1, bias=False),
+            nn.Sigmoid()
+        )
+        self.excitation2 = nn.Sequential(
+            nn.Linear(self.channel2, self.channel2 // self.reduction2, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(self.channel2 // self.reduction2, self.channel2, bias=False),
             nn.Sigmoid()
         )
 
     def forward(self, x):
         B, K, P, D = x.shape
         # 1. Permute to group patches: [B, P, K, D]
-        x_permuted = x.permute(0, 2, 1, 3).contiguous() # (B, P, K, D)
+        x = x.permute(0, 2, 1, 3).contiguous() # (B, P, K, D)
         # 2. Reshape for processing each (K, D) group independently: [B*P, K, D]
-        x_reshaped = x_permuted.view(B * P, K, D) # (B*P, K, D)
+        x_reshape = x.view(B * P, K, D) # (B*P, K, D)
 
         # 3. Squeeze: 对每个 D 维特征做平均，得到每个 Token 的响应强度: [B*P, K, 1]
-        squeezed = self.pool(x_reshaped) # (B*P, K, 1)
-        squeezed = squeezed.view(B * P, K) # (B*P, K)
+        x_token_squeeze = self.squeeze(x_reshape) # (B*P, K, 1)
+        x_token_squeeze = x_token_squeeze.view(B * P, K) # (B*P, K)
 
         # 4. Excitation: 学习 K 个 Token 的权重: [B*P, K]
-        weights = self.excitation(squeezed) # (B*P, K)
+        token_weights = self.excitation1(x_token_squeeze) # (B*P, K)
 
-        # 5. Reshape weights back to match original dimensions for broadcasting
-        # We want to apply these weights to the original x [B, K, P, D]
-        # So we need weights to be [B, K, P, 1]
-        weights = weights.view(B, P, K).permute(0, 2, 1).contiguous() # (B, K, P)
-        weights = weights.unsqueeze(-1) # (B, K, P, 1)
+        # 5. Reshape token_weights back to match original dimensions for broadcasting
+        # We want to apply these token_weights to the original x [B, K, P, D]
+        # So we need token_weights to be [B, K, P, 1]
+        token_weights = token_weights.view(B, P, K).permute(0, 2, 1).contiguous() # (B, K, P)
+        token_weights = token_weights.unsqueeze(-1) # (B, K, P, 1)
 
-        return weights
+        x = x*token_weights
+        x = torch.sum(x,dim=1)  # [B, num_patches, dim]
+
+        x_patch_squeeze = self.squeeze(x) # (B, P, 1)
+        x_patch_squeeze = x_patch_squeeze.view(B , P) # (B, P)
+        patch_weights = self.excitation2(x_patch_squeeze)
+        patch_weights = patch_weights.unsqueeze(-1)
+
+        x = x*patch_weights
+        x= torch.sum(x,dim=1)
+
+        return x
 
 class Transformer(nn.Module):
     def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout=0.):
@@ -134,9 +153,7 @@ class TSViT(nn.Module):
         x = self.space_transformer(x) # (B×num_classes, num_patches_1d^2 , dim)
 
         da_features = x.reshape(B,self.num_classes, self.num_patches_1d**2 , self.dim)
-        se_weights = self.se_block(x) # [B, K,  num_patches, 1]
-        da_features = da_features * se_weights # [B, K, num_patches, dim]
-        da_features = torch.sum(da_features, dim=1) # [B, num_patches, dim]
+        da_features = self.se_block(da_features) # [B, dim]
 
         x = self.mlp_head(x.reshape(-1, self.dim))
         x = x.reshape(B, self.num_classes, self.num_patches_1d**2, self.patch_size**2).permute(0, 2, 3, 1)
