@@ -141,10 +141,10 @@ def France_segmentation_transform(model_config, data_config, is_training):
             HVFlip(hflip_prob=0.5, vflip_prob=0.5, ground_truths=ground_truths))  # horizontal, vertical flip
 
     transform_list.append(
-        Add2UnkClass(unk_class=5, ground_truth_target=ground_truth_target,
+        Add2UnkClass(unk_class=model_config['num_classes'], ground_truth_target=ground_truth_target,
                      ground_truth_masks=ground_truth_masks))  # extract unknown label mask
     if ignore_background:
-        transform_list.append(UnkMask(unk_class=5,
+        transform_list.append(UnkMask(unk_class=model_config['num_classes'],
                                       ground_truth_target=ground_truth_target))  # extract unknown label mask
 
     # if include_ids:

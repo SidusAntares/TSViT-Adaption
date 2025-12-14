@@ -57,7 +57,7 @@ def MTLCC_transform(model_config, data_config, is_training):
         CutOrPad(max_seq_len=max_seq_len, random_sample=True))  # pad with zeros to maximum sequence length
     if is_training:
         transform_list.append(HVFlip(hflip_prob=0.5, vflip_prob=0.5))  # horizontal, vertical flip
-    transform_list.append(UnkMask(unk_class=5))  # extract unknown label mask
+    transform_list.append(UnkMask(unk_class=model_config['num_classes']))  # extract unknown label mask
     # transform_list.append(AddBagOfLabels(n_class=n_class))
     if 'edge_labels' in extra_data:
         transform_list.append(AddEdgeLabel())
@@ -259,6 +259,8 @@ class Concat(object):
         inputs = torch.cat([sample[key] for key in self.concat_keys], dim=-1)
         sample["inputs"] = inputs
         sample = {key: sample[key] for key in sample.keys() if key not in self.concat_keys}
+        sample["inputs"] = torch.cat([sample["inputs"][..., 0:10], sample["inputs"][..., 13].unsqueeze(-1)], dim=-1)[
+            ..., [2, 1, 0, 4, 5, 6, 3, 7, 8, 9, 10]]
         return sample
 
 

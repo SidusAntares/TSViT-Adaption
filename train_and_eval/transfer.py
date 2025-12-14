@@ -296,7 +296,7 @@ if __name__ == "__main__":
     config_file = args.config
     print(args.device)
     device_ids = [int(d) for d in args.device.split(',')]
-    lin_cls = args.lin
+
 
     device = get_device(device_ids, allow_cpu=False)
 
