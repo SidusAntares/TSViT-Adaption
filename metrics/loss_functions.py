@@ -22,22 +22,24 @@ def get_loss(config, device, reduction='mean'):
             loss_fun.append(get_loss(config_, device, reduction=reduction))
         return loss_fun
 
+    if reduction == 'mmd':
+        return MK_MMD_Loss(kernel_mul=loss_config['mmd_kernel_mul'], kernel_num=loss_config['mmd_kernel_num'], fix_sigma=loss_config['mmd_fix_sigma'])
+
+    else:
     # Cross-Entropy Loss ------------------------------------------------------------------
-    if loss_config['loss_function'] == 'cross_entropy':
-        num_classes = get_params_values(model_config, 'num_classes', None)
-        weight = torch.Tensor(num_classes * [1.0]).to(device)
-        if loss_config['class_weights'] not in [None, {}]:
-            for key in loss_config['class_weights']:
-                weight[key] = loss_config['class_weights'][key]
-        return torch.nn.CrossEntropyLoss(weight=weight, reduction=reduction)
+        if loss_config['loss_function'] == 'cross_entropy':
+            num_classes = get_params_values(model_config, 'num_classes', None)
+            weight = torch.Tensor(num_classes * [1.0]).to(device)
+            if loss_config['class_weights'] not in [None, {}]:
+                for key in loss_config['class_weights']:
+                    weight[key] = loss_config['class_weights'][key]
+            return torch.nn.CrossEntropyLoss(weight=weight, reduction=reduction)
     
     # Masked Cross-Entropy Loss -----------------------------------------------------------
-    elif loss_config['loss_function'] == 'masked_cross_entropy':
-        mean = reduction == 'mean'
-        return MaskedCrossEntropyLoss(mean=mean)
+        elif loss_config['loss_function'] == 'masked_cross_entropy':
+            mean = reduction == 'mean'
+            return MaskedCrossEntropyLoss(mean=mean)
 
-    if reduction == 'mmd':
-        return MK_MMD_Loss(kernel_mul=2.0, kernel_num=5, fix_sigma=None)
     return None
 
 

@@ -33,12 +33,12 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
         _,trg_da_features = net(trg_sample['inputs'].to(device))
         src_outputs = src_outputs.permute(0, 2, 3, 1)
         ground_truth = loss_input_fn(src_sample, device)
-        loss1 = loss_fn['mean'](src_outputs, ground_truth)
-        loss2 = loss_fn['mmd'](src_da_features, trg_da_features)
-        loss = loss1 + lambda_mmd*loss2
+        loss_cls = loss_fn['mean'](src_outputs, ground_truth)
+        loss_mmd = loss_fn['mmd'](src_da_features, trg_da_features)
+        loss = loss_cls + lambda_mmd * loss_mmd
         loss.backward()
         optimizer.step()
-        return src_outputs, ground_truth, loss
+        return src_outputs, ground_truth, loss, loss_cls, loss_mmd
 
     def evaluate(net, evalloader, loss_fn, config):
         num_classes = config['MODEL']['num_classes']
@@ -48,8 +48,6 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
         net.eval()
         with torch.no_grad():
             for step, sample in enumerate(evalloader):
-
-
                 logits, _ = net(sample['inputs'].to(device))
                 logits = logits.permute(0, 2, 3, 1)
                 _, predicted = torch.max(logits.data, -1)
@@ -191,13 +189,15 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
 
     net.train()
     for epoch in range(start_epoch, start_epoch + num_epochs):  # loop over the dataset multiple times
+        epoch_train_loss_cls = 0.0
+        epoch_train_loss_mmd = 0.0
         epoch_train_loss = 0.0
         num_train_batches = 0
         joint_loaders = enumerate(zip(src_dataloaders['train'],trg_dataloaders['train']))
         for step, (src_sample,trg_sample) in joint_loaders:
 
             abs_step = start_global + (epoch - start_epoch) * num_steps_train + step
-            logits, ground_truth, loss = train_step(net, src_sample,trg_sample, loss_fn, optimizer, device,
+            logits, ground_truth, loss, loss_cls, loss_mmd = train_step(net, src_sample,trg_sample, loss_fn, optimizer, device,
                                                     loss_input_fn=loss_input_fn,lambda_mmd=loss_lambda_mmd)
             if len(ground_truth) == 2:
                 labels, unk_masks = ground_truth
@@ -205,6 +205,8 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
                 labels = ground_truth
                 unk_masks = None
 
+            epoch_train_loss_cls += loss_cls.item()
+            epoch_train_loss_mmd += loss_mmd.item()
             epoch_train_loss += loss.item()
             num_train_batches += 1
             # print batch statistics ----------------------------------------------------------------------------------#
@@ -223,28 +225,32 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
 
         scheduler.step_update(abs_step)
 
+        avg_train_loss_cls = epoch_train_loss_cls / num_train_batches if num_train_batches > 0 else 0.0
+        avg_train_loss_mmd = epoch_train_loss_mmd / num_train_batches if num_train_batches > 0 else 0.0
         avg_train_loss = epoch_train_loss / num_train_batches if num_train_batches > 0 else 0.0
         print(f"\nRunning Evaluation at End of Epoch {epoch}")
-        eval_metrics = evaluate(net, trg_dataloaders['eval'], loss_fn, config)
-        macro_iou = eval_metrics[1]['macro']['IOU']
-        micro_iou = eval_metrics[1]['micro']['IOU']
-        accuracy = eval_metrics[1]['macro']['Accuracy']
-        precision = eval_metrics[1]['macro']['Precision']
-        recall = eval_metrics[1]['macro']['Recall']
-        f1 = eval_metrics[1]['macro']['F1']
+        eval_trg_metrics = evaluate(net, trg_dataloaders['eval'], loss_fn, config)
+        eval_src_metrics = evaluate(net, src_dataloaders['eval'], loss_fn, config)
+        macro_iou = eval_trg_metrics[1]['macro']['IOU']
+        micro_iou = eval_trg_metrics[1]['micro']['IOU']
+        accuracy = eval_trg_metrics[1]['macro']['Accuracy']
+        precision = eval_trg_metrics[1]['macro']['Precision']
+        recall = eval_trg_metrics[1]['macro']['Recall']
+        f1 = eval_trg_metrics[1]['macro']['F1']
 
         # 构造该 epoch 的指标字典
         epoch_metrics = {
             "epoch": epoch,
             "train_loss": avg_train_loss,
-            "mAcc": accuracy,
-            "OA": eval_metrics[1]['micro']['Accuracy'],
+            "train_loss_cls": avg_train_loss_cls,
+            "train_loss_mmd": avg_train_loss_mmd,
+            "trg_mAcc": accuracy,
+            "trg_OA": eval_trg_metrics[1]['micro']['Accuracy'],
+            "src_mAcc": eval_src_metrics[1]['micro']['Accuracy'],
+            "src_OA": eval_src_metrics[1]['micro']['Accuracy'],
             "lr": optimizer.param_groups[0]["lr"],
-            "val_macro_IOU": macro_iou,
-            "val_micro_IOU": micro_iou,
-            "val_precision": precision,
-            "val_recall": recall,
-            "val_F1": f1,
+            "trg_precision": precision,
+            "src_precision": eval_src_metrics[1]['macro']['Precision']
         }
 
         # 每个 epoch 训练完立即写入 CSV（防止中断丢失）
