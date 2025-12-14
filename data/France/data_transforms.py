@@ -11,6 +11,15 @@ import random
 from utils.config_files_utils import get_params_values
 from scipy import ndimage
 
+# name_dict = {0:'beet',1:'meadow',2:'potatoes',3:'winter wheat',4:'winter barley',5:'corn'}
+# beet:11  meadow:0,5,18  winter wheat:12  winter barley:4  corn:8,10,17
+remap_label_dict2 = {
+    'labels_20k2k': {11: 0,
+                     0: 1, 5: 1, 18: 1,
+                     12: 2, 4: 3,
+                     8: 4, 10: 4, 17: 4,
+                     1: 5, 2: 5, 3: 5, 9: 5, 20: 5, 13: 5, 6: 5, 7: 5, 14: 5, 15: 5, 16: 5, 19: 5}}
+
 remap_label_dict = {
     'labels_20k2k': {0: 20,
                      1: 0, 2: 1, 3: 2,
@@ -37,7 +46,7 @@ remap_label_dict = {
                      148: 20, 149: 20, 150: 20, 151: 20, 152: 20, 153: 20, 154: 20, 155: 20, 156: 20, 157: 20,
                      158: 20, 159: 20, 160: 20, 161: 20, 162: 20, 163: 20, 164: 20, 165: 20, 166: 20, 167: 20
                      }
-                    }
+}
 
 dataset_img_size_dict = {'psetae_repl_55x55_11': 48, 'psetae_repl_2016_100_3': 48, 'psetae_repl_2017_100_3': 48,
                          'psetae_repl_2018_100_3': 48}
@@ -49,7 +58,7 @@ def get_label_names(label_dict):
         names[[remap_label_dict[label]]] = label_dict[label]
     return names
 
-    
+
 def France_segmentation_transform(model_config, data_config, is_training):
     """
     """
@@ -60,12 +69,16 @@ def France_segmentation_transform(model_config, data_config, is_training):
     doy_bins = get_params_values(data_config, 'doy_bins', None)
     # label_sc_fact = get_params_values(data_config, 'label_sc_fact', 1.)
     include_ids = get_params_values(data_config, 'include_ids', True)  # False)
-    ignore_background = get_params_values(model_config, 'ignore_background', True)  # if True mask out background locs from loss, metrics
-    output_magnification = int(get_params_values(model_config, 'output_magnification', 1))  # if True mask out background locs from loss, metrics
-    label_magnification = int(get_params_values(data_config, 'label_magnification', output_magnification))  # if True mask out background locs from loss, metrics
+    ignore_background = get_params_values(model_config, 'ignore_background',
+                                          True)  # if True mask out background locs from loss, metrics
+    output_magnification = int(get_params_values(model_config, 'output_magnification',
+                                                 1))  # if True mask out background locs from loss, metrics
+    label_magnification = int(get_params_values(data_config, 'label_magnification',
+                                                output_magnification))  # if True mask out background locs from loss, metrics
     if label_magnification > 1:
         output_magnification = max(output_magnification, label_magnification)
-    keep_x1_labels = get_params_values(model_config, 'keep_x1_labels', False)  # if True mask out background locs from loss, metrics
+    keep_x1_labels = get_params_values(model_config, 'keep_x1_labels',
+                                       False)  # if True mask out background locs from loss, metrics
     bidir_input = model_config['architecture'] == "ConvBiRNN"
     equal_int_bound = get_params_values(data_config, 'equal_int_bound', False)
 
@@ -94,34 +107,45 @@ def France_segmentation_transform(model_config, data_config, is_training):
         ground_truth_target = 'labels' + "_x%s" % output_magnification
         ground_truth_masks = [gt + "_x%s" % output_magnification for gt in deepcopy(ground_truth_masks)]
 
-
     transform_list = []
-    transform_list.append(ToTensor(label_type=label_type, ground_truths=ground_truths))                                  # data from numpy arrays to torch.float32
+    transform_list.append(
+        ToTensor(label_type=label_type, ground_truths=ground_truths))  # data from numpy arrays to torch.float32
 
-    transform_list.append(RemapLabel(remap_label_dict[label_map], ground_truth2remap=ground_truth_target))                      # remap labels to new values                      # remap labels to new values
+    transform_list.append(
+        RemapLabel(remap_label_dict[label_map], ground_truth2remap=ground_truth_target))  # remap labels to new values
+    # 新增
+    transform_list.append(
+        RemapLabel(remap_label_dict2[label_map], ground_truth2remap=ground_truth_target))  # remap labels to new values
 
-    transform_list.append(Normalize())                                 # normalize all inputs individually
+    transform_list.append(Normalize())  # normalize all inputs individually
 
-    transform_list.append(Rescale(output_size=(dataset_img_res, dataset_img_res), ground_truths=[]))               # scale x20, x60 to match x10 H, W
+    transform_list.append(
+        Rescale(output_size=(dataset_img_res, dataset_img_res), ground_truths=[]))  # scale x20, x60 to match x10 H, W
 
     if dataset_img_res != input_img_res:
         transform_list.append(
-            Crop(img_size=dataset_img_res, crop_size=input_img_res, random=is_training, ground_truths=ground_truths))  # random crop
+            Crop(img_size=dataset_img_res, crop_size=input_img_res, random=is_training,
+                 ground_truths=ground_truths))  # random crop
 
-    transform_list.append(TileDates(H=input_img_res, W=input_img_res, doy_bins=doy_bins))                       # tile day and year to shape TxWxHx1
-    transform_list.append(Concat(concat_keys=['x10', 'x20', 'x60', 'doy']))     # concat x10, x20, x60, day, year
+    transform_list.append(
+        TileDates(H=input_img_res, W=input_img_res, doy_bins=doy_bins))  # tile day and year to shape TxWxHx1
+    transform_list.append(Concat(concat_keys=['x10', 'x20', 'x60', 'doy']))  # concat x10, x20, x60, day, year
     if bidir_input:
         transform_list.append(AddBackwardInputs())
     # transform_list.append(CutOrPad(max_seq_len=max_seq_len, random_sample=True, from_start=False))  # pad with zeros to maximum sequence length
-    transform_list.append(CutOrPad(max_seq_len=max_seq_len, random_sample=False, from_start=True))  # pad with zeros to maximum sequence length
+    transform_list.append(CutOrPad(max_seq_len=max_seq_len, random_sample=False,
+                                   from_start=True))  # pad with zeros to maximum sequence length
 
     if is_training:
-        transform_list.append(HVFlip(hflip_prob=0.5, vflip_prob=0.5, ground_truths=ground_truths))  # horizontal, vertical flip
+        transform_list.append(
+            HVFlip(hflip_prob=0.5, vflip_prob=0.5, ground_truths=ground_truths))  # horizontal, vertical flip
 
-    transform_list.append(Add2UnkClass(unk_class=remap_label_dict[label_map][0], ground_truth_target=ground_truth_target,
-                                       ground_truth_masks=ground_truth_masks))  # extract unknown label mask
+    transform_list.append(
+        Add2UnkClass(unk_class=5, ground_truth_target=ground_truth_target,
+                     ground_truth_masks=ground_truth_masks))  # extract unknown label mask
     if ignore_background:
-        transform_list.append(UnkMask(unk_class=remap_label_dict[label_map][0], ground_truth_target=ground_truth_target))  # extract unknown label mask
+        transform_list.append(UnkMask(unk_class=5,
+                                      ground_truth_target=ground_truth_target))  # extract unknown label mask
 
     # if include_ids:
     #     transform_list.append(UpdateIds())
@@ -130,8 +154,9 @@ def France_segmentation_transform(model_config, data_config, is_training):
     # transform_list.append(AddBagOfLabels(n_class=n_class))
 
     if (output_magnification > 1) and (label_magnification != output_magnification) and (label_magnification != 1):
-        transform_list.append(Rescale(output_size=(label_magnification*dataset_img_res, label_magnification*dataset_img_res),
-                                      ground_truths=['labels_x4'], rescale_gt_only=True))
+        transform_list.append(
+            Rescale(output_size=(label_magnification * dataset_img_res, label_magnification * dataset_img_res),
+                    ground_truths=['labels_x4'], rescale_gt_only=True))
 
     if (output_magnification > 1) and (not keep_x1_labels) and (label_magnification != 1):
         transform_list.append(RenameGroundTruth(rename_dict={'labels' + "_x%d" % output_magnification: 'labels'}))
@@ -143,8 +168,8 @@ def France_segmentation_transform(model_config, data_config, is_training):
         transform_list.append(EqualIntBoundPoints())
 
     if train_stage == 0:
-    # if 'same_class_labels' in extra_data:
-    #     global_attn = model_config['global_attn']
+        # if 'same_class_labels' in extra_data:
+        #     global_attn = model_config['global_attn']
         kernel_size = model_config['cscl_win_size']
         kernel_stride = model_config['cscl_win_stride']
         kernel_dilation = model_config['cscl_win_dilation']
@@ -162,6 +187,7 @@ class RenameGroundTruth(object):
     items in  : x10, x20, x60, day, year, labels
     items out : x10, x20, x60, day, year, labels
     """
+
     def __init__(self, rename_dict):
         self.rename_dict = rename_dict
 
@@ -180,6 +206,7 @@ class ToTensor(object):
     items in  : x10, x20, x60, day, year, labels
     items out : x10, x20, x60, day, year, labels
     """
+
     def __init__(self, label_type='groups', ground_truths=[]):
         self.label_type = label_type
         self.ground_truths = ground_truths
@@ -187,13 +214,17 @@ class ToTensor(object):
     def __call__(self, sample):
         tensor_sample = {}
         # inputs
-        tensor_sample['x10'] = torch.stack([torch.tensor(sample[key].astype(np.float32)) for key in ['B04', 'B03', 'B02', 'B08']]).permute(1, 2, 3, 0)
-        tensor_sample['x20'] = torch.stack([torch.tensor(sample[key].astype(np.float32)).type(torch.float32) for key in ['B05', 'B06', 'B07', 'B8A', 'B11', 'B12']]).permute(1, 2, 3, 0)
-        tensor_sample['x60'] = torch.stack([torch.tensor(sample[key].astype(np.float32)) for key in ['B01', 'B09', 'B10']]).permute(1, 2, 3, 0)
+        tensor_sample['x10'] = torch.stack(
+            [torch.tensor(sample[key].astype(np.float32)) for key in ['B04', 'B03', 'B02', 'B08']]).permute(1, 2, 3, 0)
+        tensor_sample['x20'] = torch.stack([torch.tensor(sample[key].astype(np.float32)).type(torch.float32) for key in
+                                            ['B05', 'B06', 'B07', 'B8A', 'B11', 'B12']]).permute(1, 2, 3, 0)
+        tensor_sample['x60'] = torch.stack(
+            [torch.tensor(sample[key].astype(np.float32)) for key in ['B01', 'B09', 'B10']]).permute(1, 2, 3, 0)
         tensor_sample['doy'] = torch.tensor(np.array(sample['doy']).astype(np.float32))
         # ground truths
         for gt in self.ground_truths:
-            tensor_sample[gt] = torch.tensor(sample[gt].astype(np.float32)).unsqueeze(dim=0).permute(1, 2, 0)  # pixels assigned fully to at least two parcels
+            tensor_sample[gt] = torch.tensor(sample[gt].astype(np.float32)).unsqueeze(dim=0).permute(1, 2,
+                                                                                                     0)  # pixels assigned fully to at least two parcels
 
         return tensor_sample
 
@@ -205,12 +236,12 @@ class RemapLabel(object):
     items in  : x10, x20, x60, day, year, labels
     items out : x10, x20, x60, day, year, labels
     """
-    
+
     def __init__(self, labels_dict, ground_truth2remap='labels'):
         assert isinstance(labels_dict, (dict,))
         self.labels_dict = labels_dict
         self.ground_truth2remap = ground_truth2remap
-    
+
     def __call__(self, sample):
         labels = sample[self.ground_truth2remap]
         not_remapped = torch.ones(labels.shape, dtype=torch.bool)
@@ -230,6 +261,7 @@ class Normalize(object):
     items in  : x10, x20, x60, day, year, labels
     items out : x10, x20, x60, day, year, labels
     """
+
     def __call__(self, sample):
         sample['x10'] = sample['x10'] * 1e-4
         sample['x20'] = sample['x20'] * 1e-4
@@ -264,12 +296,12 @@ class Crop(object):
             top = self.top
             left = self.left
 
-        sample['x10'] = sample['x10'][:, top:top+self.crop_size, left:left+self.crop_size]
-        sample['x20'] = sample['x20'][:, top:top+self.crop_size, left:left+self.crop_size]
-        sample['x60'] = sample['x60'][:, top:top+self.crop_size, left:left+self.crop_size]
+        sample['x10'] = sample['x10'][:, top:top + self.crop_size, left:left + self.crop_size]
+        sample['x20'] = sample['x20'][:, top:top + self.crop_size, left:left + self.crop_size]
+        sample['x60'] = sample['x60'][:, top:top + self.crop_size, left:left + self.crop_size]
 
         for gt in self.ground_truths:
-            sample[gt] = sample[gt][top:top+self.crop_size, left:left+self.crop_size]
+            sample[gt] = sample[gt][top:top + self.crop_size, left:left + self.crop_size]
 
         return sample
 
@@ -306,14 +338,14 @@ class Rescale(object):
         img = F.upsample(img, size=(self.new_h, self.new_w), mode=mode)
         img = img.permute(0, 2, 3, 1)  # move back
         return img
-    
+
     def rescale_2d_map(self, image, mode):
         # t, h, w, c = image.shape
         img = image.permute(2, 0, 1).unsqueeze(0)
         # print("0", img.shape)
         img = F.upsample(img, size=(self.new_h, self.new_w), mode=mode)
         # print("1", img.shape)
-        img = img.squeeze(0).squeeze(0)#.permute(1, 2, 0)  # move back
+        img = img.squeeze(0).squeeze(0)  # .permute(1, 2, 0)  # move back
         # print("2", img.shape)
         return img
 
@@ -336,15 +368,15 @@ class TileDates(object):
     def __call__(self, sample):
         sample['doy'] = self.repeat(sample['doy'], binned=self.doy_bins is not None)
         return sample
-    
+
     def repeat(self, tensor, binned=False):
         if binned:
-            out = tensor.unsqueeze(1).unsqueeze(1).repeat(1, self.H, self.W, 1)#.permute(0, 2, 3, 1)
+            out = tensor.unsqueeze(1).unsqueeze(1).repeat(1, self.H, self.W, 1)  # .permute(0, 2, 3, 1)
         else:
             out = tensor.repeat(1, self.H, self.W, 1).permute(3, 1, 2, 0)
         return out
-    
-    
+
+
 # 7
 class Concat(object):
     """
@@ -352,9 +384,10 @@ class Concat(object):
     items in  : x10, x20, x60, day, year, labels
     items out : inputs, labels
     """
+
     def __init__(self, concat_keys):
         self.concat_keys = concat_keys
-        
+
     def __call__(self, sample):
         try:
             inputs = torch.cat([sample[key] for key in self.concat_keys], dim=-1)
@@ -372,11 +405,12 @@ class AddBackwardInputs(object):
     items in  : inputs, labels
     items out : inputs, inputs_backward, labels
     """
+
     def __call__(self, sample):
         sample['inputs_backward'] = torch.flip(sample['inputs'], (0,))
         return sample
-    
-    
+
+
 # 9
 class CutOrPad(object):
     """
@@ -392,7 +426,8 @@ class CutOrPad(object):
         self.max_seq_len = max_seq_len
         self.random_sample = random_sample
         self.from_start = from_start
-        assert int(random_sample) * int(from_start) == 0, "choose either one of random, from start sequence cut methods but not both"
+        assert int(random_sample) * int(
+            from_start) == 0, "choose either one of random, from start sequence cut methods but not both"
 
     def __call__(self, sample):
         seq_len = deepcopy(sample['inputs'].shape[0])
@@ -422,9 +457,9 @@ class CutOrPad(object):
                 start_idx = 0
             else:
                 start_idx = torch.randint(seq_len - self.max_seq_len, (1,))[0]
-            tensor = tensor[start_idx:start_idx+self.max_seq_len]
+            tensor = tensor[start_idx:start_idx + self.max_seq_len]
         return tensor
-    
+
     def random_subseq(self, seq_len):
         return torch.randperm(seq_len)[:self.max_seq_len].sort()[0]
 
@@ -436,14 +471,14 @@ class HVFlip(object):
     items in  : inputs, *inputs_backward, labels
     items out : inputs, *inputs_backward, labels
     """
-    
+
     def __init__(self, hflip_prob, vflip_prob, ground_truths=[]):
         assert isinstance(hflip_prob, (float,))
         assert isinstance(vflip_prob, (float,))
         self.hflip_prob = hflip_prob
         self.vflip_prob = vflip_prob
         self.ground_truths = ground_truths
-    
+
     def __call__(self, sample):
         if random.random() < self.hflip_prob:
             sample['inputs'] = torch.flip(sample['inputs'], (2,))
@@ -451,7 +486,7 @@ class HVFlip(object):
                 sample['inputs_backward'] = torch.flip(sample['inputs_backward'], (2,))
             for gt in self.ground_truths:
                 sample[gt] = torch.flip(sample[gt], (1,))
-        
+
         if random.random() < self.vflip_prob:
             sample['inputs'] = torch.flip(sample['inputs'], (1,))
             if "inputs_backward" in sample:
@@ -502,7 +537,6 @@ class UnkMask(object):
         self.ground_truth_target = ground_truth_target
 
     def __call__(self, sample):
-
         sample['unk_masks'] = (sample[self.ground_truth_target] != self.unk_class)
 
         if 'labels_grid' in sample.keys():
@@ -527,10 +561,10 @@ class AddBagOfLabels(object):
     items in  : inputs, labels
     items out : inputs, inputs_backward, labels
     """
-    
+
     def __init__(self, n_class):
         self.n_class = n_class
-    
+
     def __call__(self, sample):
         labels = sample['labels']
         bol = torch.zeros(self.n_class)
@@ -546,20 +580,20 @@ class AddEdgeLabel(object):
     items in  : x10, x20, x60, day, year, labels
     items out : x10, x20, x60, day, year, labels
     """
-    
+
     def __init__(self, nb_size=3, stride=1, pad_size=1, axes=[0, 1]):
         self.nb_size = nb_size
         self.stride = stride
         self.pad_size = pad_size
         self.axes = axes
-    
+
     def __call__(self, sample):
         labels = sample['labels'].permute(2, 0, 1)[0]
         # print(labels.shape)
         edge_labels = self.get_edge_labels(labels)
         sample['edge_labels'] = edge_labels
         return sample
-    
+
     def get_edge_labels(self, labels):
         lto = labels.to(torch.float32)
         H = lto.shape[self.axes[0]]
@@ -579,13 +613,14 @@ class EqualIntBoundPoints(object):
     """
     Update mask such that an equal number of interior and boundary points are used in loss
     """
+
     def __init__(self):
         self.extract_edges = AddEdgeLabel().get_edge_labels
 
     def __call__(self, sample):
         unk_masks = sample['unk_masks'][:, :, 0]
         if 'edge_labels' in sample.keys():
-            edge_labels = sample['edge_labels']#[0]
+            edge_labels = sample['edge_labels']  # [0]
         else:
             edge_labels = self.extract_edges(sample['labels'].permute(2, 0, 1)[0])
         kn_bound = unk_masks & edge_labels
@@ -621,6 +656,7 @@ class AddCSCLLabels(object):
     items in  : x10, x20, x60, day, year, labels
     items out : x10, x20, x60, day, year, labels
     """
+
     def __init__(self, kernel_size=None, kernel_stride=1, kernel_dilation=1, pad_value=100, add_mask=False):
         self.kernel_size = kernel_size
         self.kernel_stride = kernel_stride
@@ -647,7 +683,7 @@ class AddCSCLLabels(object):
         self.dilated_kernel_size = (kernel_size - 1) * kernel_dilation + 1
         print("dilated win size: ", self.dilated_kernel_size)
         self.pad_size = self.dilated_kernel_size // 2
-    
+
     def __call__(self, sample):
         ### ALSO unfold unk masks to mask SAL
         # https://en.wikipedia.org/wiki/Logical_matrix
@@ -668,9 +704,14 @@ class AddCSCLLabels(object):
             mask[windows == self.pad_value] = 0.
             mask[windows_q[:, :, 0].reshape(h1, w1, h2, w2) == self.pad_value] = 0.
             mask[:, :, self.center_idx, self.center_idx] = 0.
-            background_mask_self = sample['unk_masks'].clone().repeat(1, 1, self.kernel_size**2).reshape(h1, w1, h2, w2)
-            background_mask_other = F.pad(sample['unk_masks'].clone().squeeze(-1), (self.pad_size, self.pad_size, self.pad_size, self.pad_size), value=False)#.unsqueeze(-1)
-            background_mask_other = background_mask_other.unfold(0, self.kernel_size, self.kernel_stride).unfold(1, self.kernel_size, self.kernel_stride)
+            background_mask_self = sample['unk_masks'].clone().repeat(1, 1, self.kernel_size ** 2).reshape(h1, w1, h2,
+                                                                                                           w2)
+            background_mask_other = F.pad(sample['unk_masks'].clone().squeeze(-1),
+                                          (self.pad_size, self.pad_size, self.pad_size, self.pad_size),
+                                          value=False)  # .unsqueeze(-1)
+            background_mask_other = background_mask_other.unfold(0, self.kernel_size, self.kernel_stride).unfold(1,
+                                                                                                                 self.kernel_size,
+                                                                                                                 self.kernel_stride)
             sample['cscl_labels_mask'] = mask.to(torch.bool) & background_mask_self & background_mask_other
 
         return sample
@@ -697,6 +738,7 @@ class UpdateIds(object):
     """
     Remap ids instances to relative instead of global numbers
     """
+
     def __call__(self, sample):
         ids = sample['ids']
         uids_dict = {v: i for i, v in enumerate(ids.unique())}
@@ -727,7 +769,7 @@ class SOLOGroundTruths(object):
         ids = sample['ids']
 
         uids = ids.unique()[1:]  # no background
-        ids_mask = torch.zeros(torch.Size([self.num_grid**2]) + ids.shape, dtype=torch.float32)  # [:2])
+        ids_mask = torch.zeros(torch.Size([self.num_grid ** 2]) + ids.shape, dtype=torch.float32)  # [:2])
         cate_label = self.unk_class * torch.ones([self.num_grid, self.num_grid], dtype=torch.int64)
 
         for ii, id_ in enumerate(uids):
@@ -767,10 +809,10 @@ class SOLOGroundTruths(object):
                     ids_mask[i * self.num_grid + j] = mask
 
         sample['ids_masks'] = ids_mask
-        ids_ind_masks = torch.zeros(self.num_grid**2).to(torch.bool)
-        ids_ind_masks[torch.arange(self.num_grid**2)[ids_mask.sum(dim=(1, 2, 3)) > 0]] = True
+        ids_ind_masks = torch.zeros(self.num_grid ** 2).to(torch.bool)
+        ids_ind_masks[torch.arange(self.num_grid ** 2)[ids_mask.sum(dim=(1, 2, 3)) > 0]] = True
         sample['ids_ind_masks'] = ids_ind_masks
-        sample['labels_grid'] = cate_label.unsqueeze(-1)  #.to(torch.int64)
+        sample['labels_grid'] = cate_label.unsqueeze(-1)  # .to(torch.int64)
 
         return sample
 

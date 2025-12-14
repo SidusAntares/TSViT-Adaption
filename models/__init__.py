@@ -11,4 +11,4 @@ def get_model(config, device):
             return TSViT(model_config).to(device)
 
     else:
-        raise NameError("Model architecture %s not found, choose from: 'UNET3D', 'UNET3Df', 'UNET2D-CLSTM', 'TSViT', 'TSViTcls'")
+        raise NameError("Model architecture %s not found, choose from: 'TSViT'")

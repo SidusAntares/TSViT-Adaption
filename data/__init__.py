@@ -1,13 +1,10 @@
 import torch
 from data.MTLCC.dataloader import get_dataloader as get_mtlcc_dataloader
 from data.MTLCC.data_transforms import MTLCC_transform
-from data.MTLCC.data_transforms_transfer import MTLCC_transform_transfer
 from data.France.dataloader import get_dataloader as get_france_dataloader
 from data.France.data_transforms import France_segmentation_transform
-from data.France.data_transforms_transfer import France_segmentation_transform_transfer
 from data.PASTIS24.dataloader import get_dataloader as get_pastis_dataloader
 from data.PASTIS24.data_transforms import PASTIS_segmentation_transform
-from data.PASTIS24.data_transforms_transfer import PASTIS_segmentation_transform_transfer
 from utils.config_files_utils import get_params_values, read_yaml
 
 

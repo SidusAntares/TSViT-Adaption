@@ -2,7 +2,7 @@ MODEL:
   architecture:  "TSViT"
   img_res: 24
   max_seq_len: 16  #
-  num_channels: 2 # 15
+  num_channels: 10
   num_features: 16
   num_classes: 6
   ignore_background: True
@@ -16,15 +16,8 @@ MODEL:
   dim_head: 64
   emb_dropout: 0.
   scale_dim: 4
+  SE_reduction: 6
 
-TRANSFER: True
-
-DA_SOLVER:
-  beta_cluster: 0.1        # L_cluster 损失的权重
-  lambda_entropy: 0.0      # 目标域熵最小化损失的权重 (可选)
-  cluster_update_freq: 1   # 每隔多少个 epoch 更新一次聚类中心
-  num_clusters: 20
-  
 DATASETS:
   src:
     train:
@@ -58,6 +51,7 @@ SOLVER:
   num_warmup_epochs: 10
   steps: (0, 80000)
   loss_function:  masked_cross_entropy
+  loss_lambda: 0.5
   class_weights:
   lr_scheduler: 'cosine'
   lr_base: 1e-3

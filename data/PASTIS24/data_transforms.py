@@ -8,6 +8,17 @@ import random
 from utils.config_files_utils import get_params_values
 from scipy import ndimage
 
+# name_dict = {0:'beet',1:'meadow',2:'potatoes',3:'winter wheat',4:'winter barley',5:'corn'}
+# name_dict = {0:'beet',1:'meadow',2:'winter wheat',3:'winter barley',4:'corn'}
+
+remap_label_dict = {9:0,1:1,13:2,
+                    2:3,11:3,
+                    4:4,3:5,
+                    0:6,5:6,6:6,7:6,8:6,10:6,12:6,14:6,15:6,16:6,17:6,18:6,19:6}
+# remap_label_dict = {9:0,1:1,
+#                     2:2,11:2,
+#                     4:3,3:4,
+#                     13:5,0:5,5:5,6:5,7:5,8:5,10:5,12:5,14:5,15:5,16:5,17:5,18:5,19:5}
 
 def PASTIS_segmentation_transform(model_config, is_training):
     """
@@ -18,16 +29,20 @@ def PASTIS_segmentation_transform(model_config, is_training):
     max_seq_len = model_config['max_seq_len']
     inputs_backward = get_params_values(model_config, 'inputs_backward', False)
     transform_list = []
-    transform_list.append(ToTensor())                                  # data from numpy arrays to torch.float32
-    transform_list.append(Normalize())                                 # normalize all inputs individually
+    transform_list.append(ToTensor())  # data from numpy arrays to torch.float32
+    transform_list.append(RemapLabel(remap_label_dict))
+    transform_list.append(Normalize())  # normalize all inputs individually
 
     if dataset_img_res != input_img_res:
         transform_list.append(
-            Crop(img_size=dataset_img_res, crop_size=input_img_res, random=is_training, ground_truths=ground_truths))  # random crop
+            Crop(img_size=dataset_img_res, crop_size=input_img_res, random=is_training,
+                 ground_truths=ground_truths))  # random crop
 
-    transform_list.append(TileDates(H=model_config['img_res'], W=model_config['img_res'], doy_bins=None))                       # tile day and year to shape TxWxHx1
-    transform_list.append(CutOrPad(max_seq_len=max_seq_len, random_sample=False, from_start=True))  # pad with zeros to maximum sequence length
-    transform_list.append(UnkMask(unk_class=19, ground_truth_target='labels'))  # extract unknown label mask
+    transform_list.append(TileDates(H=model_config['img_res'], W=model_config['img_res'],
+                                    doy_bins=None))  # tile day and year to shape TxWxHx1
+    transform_list.append(CutOrPad(max_seq_len=max_seq_len, random_sample=False,
+                                   from_start=True))  # pad with zeros to maximum sequence length
+    transform_list.append(UnkMask(unk_class=5, ground_truth_target='labels'))  # extract unknown label mask
 
     if inputs_backward:
         transform_list.append(AddBackwardInputs())
@@ -43,6 +58,7 @@ class ToTHWC(object):
     items in  : x10, x20, x60, day, year, labels
     items out : x10, x20, x60, day, year, labels
     """
+
     def __call__(self, sample):
         sample['inputs'] = sample['inputs'].permute(0, 2, 3, 1)
         return sample
@@ -55,6 +71,7 @@ class ToTensor(object):
     items in  : x10, x20, x60, day, year, labels
     items out : x10, x20, x60, day, year, labels
     """
+
     def __init__(self, label_type='groups', ground_truths=[]):
         self.label_type = label_type
         self.ground_truths = ground_truths
@@ -75,12 +92,12 @@ class RemapLabel(object):
     items in  : x10, x20, x60, day, year, labels
     items out : x10, x20, x60, day, year, labels
     """
-    
+
     def __init__(self, labels_dict, ground_truth2remap='labels'):
         assert isinstance(labels_dict, (dict,))
         self.labels_dict = labels_dict
         self.ground_truth2remap = ground_truth2remap
-    
+
     def __call__(self, sample):
         labels = sample[self.ground_truth2remap]
         not_remapped = torch.ones(labels.shape, dtype=torch.bool)
@@ -100,27 +117,29 @@ class Normalize(object):
     items in  : x10, x20, x60, day, year, labels
     items out : x10, x20, x60, day, year, labels
     """
+
     def __init__(self):
         self.mean_fold1 = np.array([[[[1165.9398193359375]],
-                                   [[1375.6534423828125]],
-                                   [[1429.2191162109375]],
-                                   [[1764.798828125]],
-                                   [[2719.273193359375]],
-                                   [[3063.61181640625]],
-                                   [[3205.90185546875]],
-                                   [[3319.109619140625]],
-                                   [[2422.904296875]],
-                                   [[1639.370361328125]]]]).astype(np.float32)
+                                     [[1375.6534423828125]],
+                                     [[1429.2191162109375]],
+                                     [[1764.798828125]],
+                                     [[2719.273193359375]],
+                                     [[3063.61181640625]],
+                                     [[3205.90185546875]],
+                                     [[3319.109619140625]],
+                                     [[2422.904296875]],
+                                     [[1639.370361328125]]]]).astype(np.float32)
         self.std_fold1 = np.array([[[[1942.6156005859375]],
-                                  [[1881.9234619140625]],
-                                  [[1959.3798828125]],
-                                  [[1867.2239990234375]],
-                                  [[1754.5850830078125]],
-                                  [[1769.4046630859375]],
-                                  [[1784.860595703125]],
-                                  [[1767.7100830078125]],
-                                  [[1458.963623046875]],
-                                  [[1299.2833251953125]]]]).astype(np.float32)
+                                    [[1881.9234619140625]],
+                                    [[1959.3798828125]],
+                                    [[1867.2239990234375]],
+                                    [[1754.5850830078125]],
+                                    [[1769.4046630859375]],
+                                    [[1784.860595703125]],
+                                    [[1767.7100830078125]],
+                                    [[1458.963623046875]],
+                                    [[1299.2833251953125]]]]).astype(np.float32)
+
     def __call__(self, sample):
         # print('mean: ', sample['img'].mean(dim=(0,2,3)))
         # print('std : ', sample['img'].std(dim=(0,2,3)))
@@ -155,7 +174,7 @@ class Crop(object):
             left = self.left
         sample['inputs'] = sample['inputs'][:, :, top:top + self.crop_size, left:left + self.crop_size]
         for gt in self.ground_truths:
-            sample[gt] = sample[gt][top:top+self.crop_size, left:left+self.crop_size]
+            sample[gt] = sample[gt][top:top + self.crop_size, left:left + self.crop_size]
         return sample
 
 
@@ -187,7 +206,7 @@ class Rescale(object):
         img = F.upsample(img, size=(self.new_h, self.new_w), mode=mode)
         img = img.permute(0, 2, 3, 1)  # move back
         return img
-    
+
     def rescale_2d_map(self, image, mode):
         img = image.permute(2, 0, 1).unsqueeze(0)
         img = F.upsample(img, size=(self.new_h, self.new_w), mode=mode)
@@ -215,15 +234,15 @@ class TileDates(object):
         sample['inputs'] = torch.cat((sample['inputs'], doy), dim=1)
         del sample['doy']
         return sample
-    
+
     def repeat(self, tensor, binned=False):
         if binned:
-            out = tensor.unsqueeze(1).unsqueeze(1).repeat(1, self.H, self.W, 1)#.permute(0, 2, 3, 1)
+            out = tensor.unsqueeze(1).unsqueeze(1).repeat(1, self.H, self.W, 1)  # .permute(0, 2, 3, 1)
         else:
             out = tensor.repeat(1, self.H, self.W, 1).permute(3, 0, 1, 2)
         return out
-    
-    
+
+
 # 7
 class Concat(object):
     """
@@ -231,9 +250,10 @@ class Concat(object):
     items in  : x10, x20, x60, day, year, labels
     items out : inputs, labels
     """
+
     def __init__(self, concat_keys):
         self.concat_keys = concat_keys
-        
+
     def __call__(self, sample):
         inputs = torch.cat([sample[key] for key in self.concat_keys], dim=-1)
         sample["inputs"] = inputs
@@ -248,11 +268,12 @@ class AddBackwardInputs(object):
     items in  : inputs, labels
     items out : inputs, inputs_backward, labels
     """
+
     def __call__(self, sample):
         sample['inputs_backward'] = torch.flip(sample['inputs'], (0,))
         return sample
-    
-    
+
+
 # 9
 class CutOrPad(object):
     """
@@ -268,7 +289,8 @@ class CutOrPad(object):
         self.max_seq_len = max_seq_len
         self.random_sample = random_sample
         self.from_start = from_start
-        assert int(random_sample) * int(from_start) == 0, "choose either one of random, from start sequence cut methods but not both"
+        assert int(random_sample) * int(
+            from_start) == 0, "choose either one of random, from start sequence cut methods but not both"
 
     def __call__(self, sample):
         seq_len = deepcopy(sample['inputs'].shape[0])
@@ -297,9 +319,9 @@ class CutOrPad(object):
                 start_idx = 0
             else:
                 start_idx = torch.randint(seq_len - self.max_seq_len, (1,))[0]
-            tensor = tensor[start_idx:start_idx+self.max_seq_len]
+            tensor = tensor[start_idx:start_idx + self.max_seq_len]
         return tensor
-    
+
     def random_subseq(self, seq_len):
         return torch.randperm(seq_len)[:self.max_seq_len].sort()[0]
 
@@ -311,14 +333,14 @@ class HVFlip(object):
     items in  : inputs, *inputs_backward, labels
     items out : inputs, *inputs_backward, labels
     """
-    
+
     def __init__(self, hflip_prob, vflip_prob, ground_truths=[]):
         assert isinstance(hflip_prob, (float,))
         assert isinstance(vflip_prob, (float,))
         self.hflip_prob = hflip_prob
         self.vflip_prob = vflip_prob
         self.ground_truths = ground_truths
-    
+
     def __call__(self, sample):
         if random.random() < self.hflip_prob:
             sample['inputs'] = torch.flip(sample['inputs'], (2,))
@@ -374,7 +396,7 @@ class UnkMask(object):
         self.ground_truth_target = ground_truth_target
 
     def __call__(self, sample):
-        sample['unk_masks'] = (sample[self.ground_truth_target] != self.unk_class) #& \
+        sample['unk_masks'] = (sample[self.ground_truth_target] != self.unk_class)  # & \
         if 'labels_grid' in sample.keys():
             sample['unk_masks_grid'] = self.rescale_2d_map(sample['unk_masks'].to(torch.float32), mode='nearest').to(
                 torch.bool)
@@ -395,10 +417,10 @@ class AddBagOfLabels(object):
     items in  : inputs, labels
     items out : inputs, inputs_backward, labels
     """
-    
+
     def __init__(self, n_class):
         self.n_class = n_class
-    
+
     def __call__(self, sample):
         labels = sample['labels']
         bol = torch.zeros(self.n_class)
@@ -414,19 +436,19 @@ class AddEdgeLabel(object):
     items in  : x10, x20, x60, day, year, labels
     items out : x10, x20, x60, day, year, labels
     """
-    
+
     def __init__(self, nb_size=3, stride=1, pad_size=1, axes=[0, 1]):
         self.nb_size = nb_size
         self.stride = stride
         self.pad_size = pad_size
         self.axes = axes
-    
+
     def __call__(self, sample):
         labels = sample['labels'].permute(2, 0, 1)[0]
         edge_labels = self.get_edge_labels(labels)
         sample['edge_labels'] = edge_labels
         return sample
-    
+
     def get_edge_labels(self, labels):
         lto = labels.to(torch.float32)
         H = lto.shape[self.axes[0]]
@@ -445,6 +467,7 @@ class UpdateIds(object):
     """
     Remap ids instances to relative instead of global numbers
     """
+
     def __call__(self, sample):
         ids = sample['ids']
         uids_dict = {v: i for i, v in enumerate(ids.unique())}
@@ -474,7 +497,7 @@ class SOLOGroundTruths(object):
         ids = sample['ids']
 
         uids = ids.unique()[1:]  # no background
-        ids_mask = torch.zeros(torch.Size([self.num_grid**2]) + ids.shape, dtype=torch.float32)  # [:2])
+        ids_mask = torch.zeros(torch.Size([self.num_grid ** 2]) + ids.shape, dtype=torch.float32)  # [:2])
         cate_label = self.unk_class * torch.ones([self.num_grid, self.num_grid], dtype=torch.int64)
 
         for ii, id_ in enumerate(uids):
@@ -509,9 +532,9 @@ class SOLOGroundTruths(object):
                     ids_mask[i * self.num_grid + j] = mask
 
         sample['ids_masks'] = ids_mask
-        ids_ind_masks = torch.zeros(self.num_grid**2).to(torch.bool)
-        ids_ind_masks[torch.arange(self.num_grid**2)[ids_mask.sum(dim=(1, 2, 3)) > 0]] = True
+        ids_ind_masks = torch.zeros(self.num_grid ** 2).to(torch.bool)
+        ids_ind_masks[torch.arange(self.num_grid ** 2)[ids_mask.sum(dim=(1, 2, 3)) > 0]] = True
         sample['ids_ind_masks'] = ids_ind_masks
-        sample['labels_grid'] = cate_label.unsqueeze(-1)  #.to(torch.int64)
+        sample['labels_grid'] = cate_label.unsqueeze(-1)  # .to(torch.int64)
 
         return sample

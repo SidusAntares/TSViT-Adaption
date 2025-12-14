@@ -7,14 +7,19 @@ from copy import deepcopy
 import random
 from utils.config_files_utils import get_params_values
 
-
 original_label_dict = {0: "unknown", 1: "sugar_beet", 2: "summer_oat", 3: "meadow", 5: "rape", 8: "hop",
                        9: "winter_spelt", 12: "winter_triticale", 13: "beans", 15: "peas", 16: "potatoes",
                        17: "soybeans", 19: "asparagus", 22: "winter_wheat", 23: "winter_barley", 24: "winter_rye",
                        25: "summer_barley", 26: "maize"}
-remap_label_dict = {0: 17,  1: 0,  2: 1,  3: 2,  5: 3,  8: 4,  9: 5, 12: 6, 13: 7, 15: 8,
-                    16: 9, 17: 10, 19: 11, 22: 12, 23: 13, 24: 14, 25: 15, 26: 16}
 
+# name_dict = {0:'beet',1:'meadow',2:'potatoes',3:'winter wheat',4:'winter barley',5:'corn'}
+# name_dict = {0:'beet',1:'meadow',2:'winter wheat',3:'winter barley',4:'corn'}
+
+remap_label_dict = {1:0,3:1,16:2,22:3,23:4,26:5,
+                    0:6,2:6,5:6,8:6,9:6,12:6,13:6,15:6,17:6,19:6,24:6,25:6}
+
+# remap_label_dict = {1:0,3:1,22:2,23:3,26:4,
+#                     16:5,0:5,2:5,5:5,8:5,9:5,12:5,13:5,15:5,17:5,19:5,24:5,25:5}
 
 def get_label_names():
     names = {}
@@ -22,7 +27,7 @@ def get_label_names():
         names[remap_label_dict[label]] = original_label_dict[label]
     return names
 
-    
+
 def MTLCC_transform(model_config, data_config, is_training):
     """
     :param npixel:
@@ -36,21 +41,23 @@ def MTLCC_transform(model_config, data_config, is_training):
     equal_int_bound = get_params_values(data_config, 'equal_int_bound', False)
 
     transform_list = []
-    transform_list.append(ToTensor())                                  # data from numpy arrays to torch.float32
-    transform_list.append(SingleLabel())                               # extract single label from series
-    transform_list.append(RemapLabel(remap_label_dict))                      # remap labels to new values
-    transform_list.append(Normalize())                                 # normalize all inputs individually
-    transform_list.append(Rescale(output_size=(img_res, img_res)))               # scale x20, x60 to match x10 H, W
+    transform_list.append(ToTensor())  # data from numpy arrays to torch.float32
+    transform_list.append(SingleLabel())  # extract single label from series
+    transform_list.append(RemapLabel(remap_label_dict))  # remap labels to new values
+    transform_list.append(Normalize())  # normalize all inputs individually
+    transform_list.append(Rescale(output_size=(img_res, img_res)))  # scale x20, x60 to match x10 H, W
     if doy_bins is not None:
         transform_list.append(OneHotDates(N=doy_bins))
-    transform_list.append(TileDates(H=img_res, W=img_res, doy_bins=doy_bins))                       # tile day and year to shape TxWxHx1
-    transform_list.append(Concat(concat_keys=['x10', 'x20', 'x60', 'day', 'year']))     # concat x10, x20, x60, day, year
+    transform_list.append(TileDates(H=img_res, W=img_res, doy_bins=doy_bins))  # tile day and year to shape TxWxHx1
+    # transform_list.append(Concat(concat_keys=['x10', 'x20', 'x60', 'year','day']))  # concat x10, x20, x60, day, year
+    transform_list.append(Concat(concat_keys=['x10', 'x20', 'x60', 'day', 'year']))  # concat x10, x20, x60, day, year
     if bidir_input:
-        transform_list.append(AddBackwardInputs())                         # add input series in reverse for bidir models
-    transform_list.append(CutOrPad(max_seq_len=max_seq_len, random_sample=True))             # pad with zeros to maximum sequence length
+        transform_list.append(AddBackwardInputs())  # add input series in reverse for bidir models
+    transform_list.append(
+        CutOrPad(max_seq_len=max_seq_len, random_sample=True))  # pad with zeros to maximum sequence length
     if is_training:
         transform_list.append(HVFlip(hflip_prob=0.5, vflip_prob=0.5))  # horizontal, vertical flip
-    transform_list.append(UnkMask(unk_class=17))                       # extract unknown label mask
+    transform_list.append(UnkMask(unk_class=5))  # extract unknown label mask
     # transform_list.append(AddBagOfLabels(n_class=n_class))
     if 'edge_labels' in extra_data:
         transform_list.append(AddEdgeLabel())
@@ -73,11 +80,16 @@ class ToTensor(object):
     items in  : x10, x20, x60, day, year, labels
     items out : x10, x20, x60, day, year, labels
     """
+
     def __call__(self, sample):
         if 'B01' in sample.keys():
-            x10 = torch.stack([torch.tensor(sample[key].astype(np.float32)) for key in ['B04', 'B03', 'B02', 'B08']]).permute(1, 2, 3, 0)
-            x20 = torch.stack([torch.tensor(sample[key].astype(np.float32)).type(torch.float32) for key in ['B05', 'B06', 'B07', 'B8A', 'B11', 'B12']]).permute(1, 2, 3, 0)
-            x60 = torch.stack([torch.tensor(sample[key].astype(np.float32)) for key in ['B01', 'B09', 'B10']]).permute(1, 2, 3, 0)
+            x10 = torch.stack(
+                [torch.tensor(sample[key].astype(np.float32)) for key in ['B04', 'B03', 'B02', 'B08']]).permute(1, 2, 3,
+                                                                                                                0)
+            x20 = torch.stack([torch.tensor(sample[key].astype(np.float32)).type(torch.float32) for key in
+                               ['B05', 'B06', 'B07', 'B8A', 'B11', 'B12']]).permute(1, 2, 3, 0)
+            x60 = torch.stack([torch.tensor(sample[key].astype(np.float32)) for key in ['B01', 'B09', 'B10']]).permute(
+                1, 2, 3, 0)
             doy = torch.tensor(np.array(sample['doy']).astype(np.float32))
             year = torch.tensor(0.).repeat(len(sample['doy'])) + 2016
             labels = torch.tensor(sample['labels'].astype(np.float32)).unsqueeze(dim=0).unsqueeze(dim=-1)
@@ -102,10 +114,11 @@ class SingleLabel(object):
     items in  : x10, x20, x60, day, year, labels
     items out : x10, x20, x60, day, year, labels
     """
+
     def __init__(self, idx=0):
         assert isinstance(idx, (int, tuple))
         self.idx = idx
-        
+
     def __call__(self, sample):
         sample['labels'] = sample['labels'][self.idx]
         return sample
@@ -118,11 +131,11 @@ class RemapLabel(object):
     items in  : x10, x20, x60, day, year, labels
     items out : x10, x20, x60, day, year, labels
     """
-    
+
     def __init__(self, labels_dict):
         assert isinstance(labels_dict, (dict,))
         self.labels_dict = labels_dict
-    
+
     def __call__(self, sample):
         labels = sample['labels']
         not_remapped = torch.ones(labels.shape, dtype=torch.bool)
@@ -142,6 +155,7 @@ class Normalize(object):
     items in  : x10, x20, x60, day, year, labels
     items out : x10, x20, x60, day, year, labels
     """
+
     def __call__(self, sample):
         sample['x10'] = sample['x10'] * 1e-4
         sample['x20'] = sample['x20'] * 1e-4
@@ -191,7 +205,7 @@ class OneHotDates(object):
     def __call__(self, sample):
         sample['day'] = self.doy_to_bin(sample['day'])
         return sample
-    
+
     def doy_to_bin(self, doy):
         """
         assuming doy = day / 365, float in [0., 1.]
@@ -200,8 +214,8 @@ class OneHotDates(object):
         out = torch.zeros(bin_id.shape[0], self.N)
         out[torch.arange(0, bin_id.shape[0]), bin_id] = 1.
         return out
-    
-    
+
+
 # 6
 class TileDates(object):
     """
@@ -221,15 +235,15 @@ class TileDates(object):
         sample['day'] = self.repeat(sample['day'], binned=self.doy_bins is not None)
         sample['year'] = self.repeat(sample['year'], binned=False)
         return sample
-    
+
     def repeat(self, tensor, binned=False):
         if binned:
-            out = tensor.unsqueeze(1).unsqueeze(1).repeat(1, self.H, self.W, 1)#.permute(0, 2, 3, 1)
+            out = tensor.unsqueeze(1).unsqueeze(1).repeat(1, self.H, self.W, 1)  # .permute(0, 2, 3, 1)
         else:
             out = tensor.repeat(1, self.H, self.W, 1).permute(3, 1, 2, 0)
         return out
-    
-    
+
+
 # 7
 class Concat(object):
     """
@@ -237,9 +251,10 @@ class Concat(object):
     items in  : x10, x20, x60, day, year, labels
     items out : inputs, labels
     """
+
     def __init__(self, concat_keys):
         self.concat_keys = concat_keys
-        
+
     def __call__(self, sample):
         inputs = torch.cat([sample[key] for key in self.concat_keys], dim=-1)
         sample["inputs"] = inputs
@@ -254,11 +269,12 @@ class AddBackwardInputs(object):
     items in  : inputs, labels
     items out : inputs, inputs_backward, labels
     """
+
     def __call__(self, sample):
         sample['inputs_backward'] = torch.flip(sample['inputs'], (0,))
         return sample
-    
-    
+
+
 # 9
 class CutOrPad(object):
     """
@@ -300,9 +316,9 @@ class CutOrPad(object):
                 tensor = tensor[self.random_subseq(seq_len)]
             else:
                 start_idx = torch.randint(seq_len - self.max_seq_len, (1,))[0]
-                tensor = tensor[start_idx:start_idx+self.max_seq_len]
+                tensor = tensor[start_idx:start_idx + self.max_seq_len]
         return tensor
-    
+
     def random_subseq(self, seq_len):
         return torch.randperm(seq_len)[:self.max_seq_len].sort()[0]
 
@@ -314,13 +330,13 @@ class HVFlip(object):
     items in  : inputs, *inputs_backward, labels
     items out : inputs, *inputs_backward, labels
     """
-    
+
     def __init__(self, hflip_prob, vflip_prob):
         assert isinstance(hflip_prob, (float,))
         assert isinstance(vflip_prob, (float,))
         self.hflip_prob = hflip_prob
         self.vflip_prob = vflip_prob
-    
+
     def __call__(self, sample):
         if random.random() < self.hflip_prob:
             sample['inputs'] = torch.flip(sample['inputs'], (2,))
@@ -329,7 +345,7 @@ class HVFlip(object):
             sample['labels'] = torch.flip(sample['labels'], (2,))
             if 'edge_labels' in sample.keys():
                 sample['edge_labels'] = torch.flip(sample['edge_labels'], (2,))
-        
+
         if random.random() < self.vflip_prob:
             sample['inputs'] = torch.flip(sample['inputs'], (1,))
             if "inputs_backward" in sample:
@@ -337,7 +353,7 @@ class HVFlip(object):
             sample['labels'] = torch.flip(sample['labels'], (1,))
             if 'edge_labels' in sample.keys():
                 sample['edge_labels'] = torch.flip(sample['edge_labels'], (1,))
-        
+
         return sample
 
 
@@ -365,10 +381,10 @@ class AddBagOfLabels(object):
     items in  : inputs, labels
     items out : inputs, inputs_backward, labels
     """
-    
+
     def __init__(self, n_class):
         self.n_class = n_class
-    
+
     def __call__(self, sample):
         labels = sample['labels']
         bol = torch.zeros(self.n_class)
@@ -384,19 +400,19 @@ class AddEdgeLabel(object):
     items in  : x10, x20, x60, day, year, labels
     items out : x10, x20, x60, day, year, labels
     """
-    
+
     def __init__(self, nb_size=3, stride=1, pad_size=1, axes=[0, 1]):
         self.nb_size = nb_size
         self.stride = stride
         self.pad_size = pad_size
         self.axes = axes
-    
+
     def __call__(self, sample):
         labels = sample['labels'].permute(2, 0, 1)[0]
         edge_labels = self.get_edge_labels(labels)
         sample['edge_labels'] = edge_labels
         return sample
-    
+
     def get_edge_labels(self, labels):
         lto = labels.to(torch.float32)
         H = lto.shape[self.axes[0]]
@@ -416,6 +432,7 @@ class EqualIntBoundPoints(object):
     """
     Update mask such that an equal number of interior and boundary points are used in loss
     """
+
     def __init__(self):  # , N=None):
         # self.N = N
         self.extract_edges = AddEdgeLabel().get_edge_labels
@@ -424,7 +441,7 @@ class EqualIntBoundPoints(object):
         # print(labels.shape)
         unk_masks = sample['unk_masks'][:, :, 0]
         if 'edge_labels' in sample.keys():
-            edge_labels = sample['edge_labels']#[0]
+            edge_labels = sample['edge_labels']  # [0]
         else:
             edge_labels = self.extract_edges(sample['labels'].permute(2, 0, 1)[0])
         kn_bound = unk_masks & edge_labels
@@ -501,12 +518,12 @@ class AddCSCLLabels(object):
             mask[windows == self.pad_value] = 0.
             mask[windows_q[:, :, 0].reshape(h1, w1, h2, w2) == self.pad_value] = 0.
             mask[:, :, self.center_idx, self.center_idx] = 0.
-            background_mask_self = sample['unk_masks'].clone().\
+            background_mask_self = sample['unk_masks'].clone(). \
                 repeat(1, 1, self.kernel_size ** 2).reshape(h1, w1, h2, w2)
             background_mask_other = F.pad(sample['unk_masks'].clone().squeeze(-1),
                                           (self.pad_size, self.pad_size, self.pad_size, self.pad_size),
                                           value=False)
-            background_mask_other = background_mask_other.\
+            background_mask_other = background_mask_other. \
                 unfold(0, self.kernel_size, self.kernel_stride).unfold(1, self.kernel_size, self.kernel_stride)
             sample['cscl_labels_mask'] = mask.to(torch.bool) & background_mask_self & background_mask_other
 
