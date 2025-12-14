@@ -29,16 +29,26 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
     def train_step(net, src_sample,trg_sample, loss_fn, optimizer, device, loss_input_fn,lambda_mmd):
         optimizer.zero_grad()
         # print(sample['inputs'].shape)
-        src_outputs ,src_da_features = net(src_sample['inputs'].to(device))
-        _,trg_da_features = net(trg_sample['inputs'].to(device))
+        src_outputs ,src_da_features_list = net(src_sample['inputs'].to(device))
+        _,trg_da_features_list = net(trg_sample['inputs'].to(device))
+        assert len(src_da_features_list) == len(trg_da_features_list)
         src_outputs = src_outputs.permute(0, 2, 3, 1)
         ground_truth = loss_input_fn(src_sample, device)
+
+        if len(src_da_features_list) > 0:
+            loss_mmd, loss_mmd_individuals, layer_weights = loss_fn['mmd'](src_da_features_list, trg_da_features_list)
+        else:
+            loss_mmd= torch.tensor(0.0, device=device)
+            loss_mmd_individuals = []
+            layer_weights = []
+
         loss_cls = loss_fn['mean'](src_outputs, ground_truth)
-        loss_mmd = loss_fn['mmd'](src_da_features, trg_da_features)
         loss = loss_cls + lambda_mmd * loss_mmd
         loss.backward()
         optimizer.step()
-        return src_outputs, ground_truth, loss, loss_cls, loss_mmd
+        return src_outputs, ground_truth, loss, loss_cls, loss_mmd,\
+            [l.item() for l in loss_mmd_individuals] if loss_mmd_individuals else [],\
+            [w.item() for w in layer_weights] if layer_weights else []
 
     def evaluate(net, evalloader, loss_fn, config):
         num_classes = config['MODEL']['num_classes']
@@ -197,7 +207,7 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
         for step, (src_sample,trg_sample) in joint_loaders:
 
             abs_step = start_global + (epoch - start_epoch) * num_steps_train + step
-            logits, ground_truth, loss, loss_cls, loss_mmd = train_step(net, src_sample,trg_sample, loss_fn, optimizer, device,
+            logits, ground_truth, loss, loss_cls, loss_mmd, loss_mmd_list, weight_mmd_list= train_step(net, src_sample,trg_sample, loss_fn, optimizer, device,
                                                     loss_input_fn=loss_input_fn,lambda_mmd=loss_lambda_mmd)
             if len(ground_truth) == 2:
                 labels, unk_masks = ground_truth
@@ -250,7 +260,9 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
             "src_OA": eval_src_metrics[1]['micro']['Accuracy'],
             "lr": optimizer.param_groups[0]["lr"],
             "trg_precision": precision,
-            "src_precision": eval_src_metrics[1]['macro']['Precision']
+            "src_precision": eval_src_metrics[1]['macro']['Precision'],
+            "loss_mmd_list": loss_mmd_list,
+            "weight_mmd_list": weight_mmd_list
         }
 
         # 每个 epoch 训练完立即写入 CSV（防止中断丢失）

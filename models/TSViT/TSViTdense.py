@@ -63,10 +63,11 @@ class SEBlock(nn.Module):
         return x
 
 class Transformer(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout=0.):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout=0., return_medial_output= False):
         super().__init__()
         self.layers = nn.ModuleList([])
         self.norm = nn.LayerNorm(dim)
+        self.return_medial_output = return_medial_output
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
                 PreNorm(dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
@@ -74,9 +75,14 @@ class Transformer(nn.Module):
             ]))
 
     def forward(self, x):
+        medial_features = []
         for attn, ff in self.layers:
             x = attn(x) + x
             x = ff(x) + x
+            if self.return_medial_output:
+                medial_features.append(x)
+        if self.return_medial_output:
+            return self.norm(x),medial_features
         return self.norm(x)
 
 class TSViT(nn.Module):
@@ -118,7 +124,8 @@ class TSViT(nn.Module):
         self.temporal_transformer = Transformer(self.dim, self.temporal_depth, self.heads, self.dim_head,
                                                 self.dim * self.scale_dim, self.dropout)
         self.space_pos_embedding = nn.Parameter(torch.randn(1, num_patches, self.dim))
-        self.space_transformer = Transformer(self.dim, self.spatial_depth, self.heads, self.dim_head, self.dim * self.scale_dim, self.dropout)
+        self.space_transformer = Transformer(self.dim, self.spatial_depth, self.heads, self.dim_head, self.dim * self.scale_dim,
+                                             self.dropout,return_medial_output=True)
         self.dropout = nn.Dropout(self.emb_dropout)
         self.mlp_head = nn.Sequential(
             nn.LayerNorm(self.dim),
@@ -150,16 +157,19 @@ class TSViT(nn.Module):
         x = x.reshape(B, self.num_patches_1d**2, self.num_classes, self.dim).permute(0, 2, 1, 3).reshape(B*self.num_classes, self.num_patches_1d**2, self.dim)
         x += self.space_pos_embedding#[:, :, :(n + 1)]
         x = self.dropout(x)
-        x = self.space_transformer(x) # (B×num_classes, num_patches_1d^2 , dim)
+        x, medial_features = self.space_transformer(x) # (B×num_classes, num_patches_1d^2 , dim)
 
-        da_features = x.reshape(B,self.num_classes, self.num_patches_1d**2 , self.dim)
-        da_features = self.se_block(da_features) # [B, dim]
+        da_features_list = []
+        for feature in medial_features:
+            da_features = feature.reshape(B,self.num_classes, self.num_patches_1d**2 , self.dim)
+            da_features = self.se_block(da_features) # [B, dim]
+            da_features_list.append(da_features)
 
         x = self.mlp_head(x.reshape(-1, self.dim))
         x = x.reshape(B, self.num_classes, self.num_patches_1d**2, self.patch_size**2).permute(0, 2, 3, 1)
         x = x.reshape(B, H, W, self.num_classes)
         x = x.permute(0, 3, 1, 2)
-        return x , da_features
+        return x , da_features_list
 
 
 

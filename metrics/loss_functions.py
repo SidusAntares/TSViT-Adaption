@@ -23,7 +23,8 @@ def get_loss(config, device, reduction='mean'):
         return loss_fun
 
     if reduction == 'mmd':
-        return MK_MMD_Loss(kernel_mul=loss_config['mmd_kernel_mul'], kernel_num=loss_config['mmd_kernel_num'], fix_sigma=loss_config['mmd_fix_sigma'])
+        return DANAdapter(model_config['spatial_depth'],
+                          kernel_mul=loss_config['mmd_kernel_mul'], kernel_num=loss_config['mmd_kernel_num'], fix_sigma=loss_config['mmd_fix_sigma'])
 
     else:
     # Cross-Entropy Loss ------------------------------------------------------------------
@@ -408,3 +409,38 @@ class MK_MMD_Loss(nn.Module):
 
         # 确保损失非负
         return torch.clamp(loss, min=0.0)
+
+class DANAdapter(nn.Module):
+    def __init__(self, num_layers, kernel_mul=2.0, kernel_num=5, fix_sigma=None, init_alpha_mode='ones'):
+        super(DANAdapter, self).__init__()
+        self.num_layers = num_layers
+        self.mmd_loss_fn = MK_MMD_Loss(kernel_mul=kernel_mul, kernel_num=kernel_num, fix_sigma=fix_sigma)
+        if init_alpha_mode == 'zeros':
+            self.log_alphas = nn.Parameter(torch.zeros(num_layers))
+        elif init_alpha_mode == 'ones':
+            self.log_alphas = nn.Parameter(torch.ones(num_layers))
+        elif init_alpha_mode == 'random':
+            self.log_alphas = nn.Parameter(torch.randn(num_layers) * 0.1)
+        else:
+            raise ValueError("init_alpha_mode must be 'zeros', 'ones', or 'random'")
+
+    def forward(self, source_features_list, target_features_list):
+        assert len(source_features_list) == len(target_features_list) == self.num_layers, \
+            (f"Mismatch in number of layers. Expected {self.num_layers}, "
+             f"got {len(source_features_list)} (source) and {len(target_features_list)} (target).")
+        alphas = torch.exp(self.log_alphas)
+        total_weighted_loss = 0.0
+        individual_losses = []
+        weights = []
+        for i, (src_feat, tgt_feat) in enumerate(zip(source_features_list, target_features_list)):
+            if src_feat.dim() > 2:
+                src_feat = src_feat.view(src_feat.size(0), -1)
+            if tgt_feat.dim() > 2:
+                tgt_feat = tgt_feat.view(tgt_feat.size(0), -1)
+            current_loss = self.mmd_loss_fn(src_feat, tgt_feat)
+            current_alpha = alphas[i]
+            weighted_loss = current_alpha * current_loss
+            total_weighted_loss += weighted_loss
+            individual_losses.append(current_loss)
+            weights.append(current_alpha)
+        return total_weighted_loss, individual_losses, weights
