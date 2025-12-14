@@ -36,8 +36,9 @@ def get_loss(config, device, reduction='mean'):
         mean = reduction == 'mean'
         return MaskedCrossEntropyLoss(mean=mean)
 
-    else:return MMDLoss(kernel_type='rbf', kernel_mul=2.0, kernel_num=5)
-
+    if reduction == 'mmd':
+        return MMDLoss(kernel_type='rbf', kernel_mul=2.0, kernel_num=5)
+    return None
 
 
 def per_class_loss(criterion, logits, labels, unk_masks, n_classes):

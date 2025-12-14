@@ -187,13 +187,13 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
 
     loss_fn = {'all': get_loss(config, device, reduction=None),
                'mean': get_loss(config, device, reduction="mean"),
-               'mmd': get_loss(config, device, reduction="mean")}
+               'mmd': get_loss(config, device, reduction="mmd")}
 
     net.train()
     for epoch in range(start_epoch, start_epoch + num_epochs):  # loop over the dataset multiple times
         epoch_train_loss = 0.0
         num_train_batches = 0
-        joint_loaders = enumerate(zip(src_dataloaders,trg_dataloaders))
+        joint_loaders = enumerate(zip(src_dataloaders['train'],trg_dataloaders['train']))
         for step, (src_sample,trg_sample) in joint_loaders:
 
             abs_step = start_global + (epoch - start_epoch) * num_steps_train + step

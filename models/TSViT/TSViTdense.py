@@ -32,12 +32,12 @@ class SEBlock(nn.Module):
     def forward(self, x):
         B, K, P, D = x.shape
         # 1. Permute to group patches: [B, P, K, D]
-        x = x.permute(0, 2, 1, 3).contiguous() # (B, P, K, D)
+        x_permute = x.permute(0, 2, 1, 3).contiguous() # (B, P, K, D)
         # 2. Reshape for processing each (K, D) group independently: [B*P, K, D]
-        x_reshape = x.view(B * P, K, D) # (B*P, K, D)
+        x_permute = x_permute.view(B * P, K, D) # (B*P, K, D)
 
         # 3. Squeeze: 对每个 D 维特征做平均，得到每个 Token 的响应强度: [B*P, K, 1]
-        x_token_squeeze = self.squeeze(x_reshape) # (B*P, K, 1)
+        x_token_squeeze = self.squeeze(x_permute) # (B*P, K, 1)
         x_token_squeeze = x_token_squeeze.view(B * P, K) # (B*P, K)
 
         # 4. Excitation: 学习 K 个 Token 的权重: [B*P, K]
@@ -49,7 +49,7 @@ class SEBlock(nn.Module):
         token_weights = token_weights.view(B, P, K).permute(0, 2, 1).contiguous() # (B, K, P)
         token_weights = token_weights.unsqueeze(-1) # (B, K, P, 1)
 
-        x = x*token_weights
+        x = x * token_weights
         x = torch.sum(x,dim=1)  # [B, num_patches, dim]
 
         x_patch_squeeze = self.squeeze(x) # (B, P, 1)
@@ -125,7 +125,7 @@ class TSViT(nn.Module):
             nn.Linear(self.dim, self.patch_size**2)
         )
         # --- 新增 DA 特定模块 ---
-        self.se_block = SEBlock(channel=self.num_classes, reduction=16)
+        self.se_block = SEBlock(self.num_classes,self.num_patches_1d ** 2, 6,16)
 
 
     def forward(self, x):
