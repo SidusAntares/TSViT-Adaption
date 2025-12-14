@@ -37,7 +37,6 @@ def MTLCC_transform(model_config, data_config, is_training):
     max_seq_len = data_config['max_seq_len']
     extra_data = get_params_values(data_config, 'extra_data', [])
     doy_bins = get_params_values(data_config, 'doy_bins', None)
-    bidir_input = data_config['bidir_input']
     equal_int_bound = get_params_values(data_config, 'equal_int_bound', False)
 
     transform_list = []
@@ -51,8 +50,6 @@ def MTLCC_transform(model_config, data_config, is_training):
     transform_list.append(TileDates(H=img_res, W=img_res, doy_bins=doy_bins))  # tile day and year to shape TxWxHx1
     # transform_list.append(Concat(concat_keys=['x10', 'x20', 'x60', 'year','day']))  # concat x10, x20, x60, day, year
     transform_list.append(Concat(concat_keys=['x10', 'x20', 'x60', 'day', 'year']))  # concat x10, x20, x60, day, year
-    if bidir_input:
-        transform_list.append(AddBackwardInputs())  # add input series in reverse for bidir models
     transform_list.append(
         CutOrPad(max_seq_len=max_seq_len, random_sample=True))  # pad with zeros to maximum sequence length
     if is_training:
