@@ -131,8 +131,12 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
 
     print("current learn rate: ", lr)
 
+    loss_fn = {'all': get_loss(config, device, reduction=None),
+               'mean': get_loss(config, device, reduction="mean"),
+               'mmd': get_loss(config, device, reduction="mmd")}
+
     trainable_params = get_net_trainable_params(net)
-    optimizer = optim.AdamW(trainable_params, lr=lr, weight_decay=weight_decay)
+    optimizer = optim.AdamW(trainable_params+list(loss_fn['mmd'].parameters()), lr=lr, weight_decay=weight_decay)
 
     scheduler = build_scheduler(config, optimizer, num_steps_train)
 
@@ -193,9 +197,6 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
     loss_input_fn = get_loss_data_input(config)
     loss_lambda_mmd = config['SOLVER']['loss_lambda_mmd']
 
-    loss_fn = {'all': get_loss(config, device, reduction=None),
-               'mean': get_loss(config, device, reduction="mean"),
-               'mmd': get_loss(config, device, reduction="mmd")}
 
     net.train()
     for epoch in range(start_epoch, start_epoch + num_epochs):  # loop over the dataset multiple times
@@ -254,10 +255,10 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
             "train_loss": avg_train_loss,
             "train_loss_cls": avg_train_loss_cls,
             "train_loss_mmd": avg_train_loss_mmd,
-            "trg_mAcc": accuracy,
             "trg_OA": eval_trg_metrics[1]['micro']['Accuracy'],
-            "src_mAcc": eval_src_metrics[1]['micro']['Accuracy'],
+            "trg_mIoU": macro_iou,
             "src_OA": eval_src_metrics[1]['micro']['Accuracy'],
+            "srg_mIoU": eval_src_metrics[1]['macro']['IOU'],
             "lr": optimizer.param_groups[0]["lr"],
             "trg_precision": precision,
             "src_precision": eval_src_metrics[1]['macro']['Precision'],

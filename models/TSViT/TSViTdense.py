@@ -73,14 +73,20 @@ class Transformer(nn.Module):
                 PreNorm(dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
                 PreNorm(dim, FeedForward(dim, mlp_dim, dropout=dropout))
             ]))
+        if self.return_medial_output:
+            self.medial_layer_norms = nn.ModuleList([
+                nn.LayerNorm(dim) for _ in range(depth)
+            ])
+        else:
+            self.medial_layer_norms = None
 
     def forward(self, x):
         medial_features = []
-        for attn, ff in self.layers:
+        for i,(attn, ff) in enumerate(self.layers):
             x = attn(x) + x
             x = ff(x) + x
             if self.return_medial_output:
-                medial_features.append(x)
+                medial_features.append(self.medial_layer_norms[i](x))
         if self.return_medial_output:
             return self.norm(x),medial_features
         return self.norm(x)
