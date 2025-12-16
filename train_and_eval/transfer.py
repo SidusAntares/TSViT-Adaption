@@ -128,6 +128,7 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device):
 
     loss_function_da = config['SOLVER']['loss_function_da']
     loss_lambda_mmd = config['SOLVER']['loss_lambda_mmd']
+    da_start_epoch = config['SOLVER']['da_start_epoch']
 
     start_global = 1
     start_epoch = 1
@@ -207,7 +208,7 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device):
         num_train_batches = 0
         joint_loaders = enumerate(zip(src_dataloaders['train'],trg_dataloaders['train']))
         stage = False
-        if epoch > 20 and epoch & 1 :stage = True # epoch 是奇数
+        if epoch > da_start_epoch  :stage = True # epoch 是奇数
         for step, (src_sample,trg_sample) in joint_loaders:
 
             abs_step = start_global + (epoch - start_epoch) * num_steps_train + step

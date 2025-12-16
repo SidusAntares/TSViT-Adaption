@@ -11,16 +11,28 @@
 ## 3.mk-mmd
 无alpha仅mmd，$loss=loss_{cls}+\lambda \Sigma loss_{mk-mmd}$，$\lambda=0.5、1.5$
 
-### 4.add alpha_sum + mk-mmd
+## 4.add alpha_sum + mk-mmd
 $loss=loss_{cls}+\lambda \Sigma \alpha_i loss_{mk-mmd_i}$
 且$\Sigma \alpha_i = \alpha _{sum}$
 
-### 5.stage
+## 5.stage + mk-mmd
 损失设置如4所示 ，加入分阶段
 
 第一阶段只更新分类损失 ，第二阶段更新分类损失+域对齐损失
 
 前数十个epoch只更新分类损失
 
+### 1)
+前二十个epoch更新第一阶段，之后交替更新
+
+$\alpha_{sum}$=1.0
+
+$\lambda=0.5$
+### 2)
+前四十个epoch更新第一阶段，之后一直第二阶段
+
+$\alpha_{sum}$=5.0
+
+$\lambda=1.0$
 
 

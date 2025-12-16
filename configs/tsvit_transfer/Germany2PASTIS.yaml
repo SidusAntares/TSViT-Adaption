@@ -53,11 +53,12 @@ SOLVER:
   loss_function:  masked_cross_entropy
 
   loss_function_da:  mk-mmd
-  loss_lambda_mmd: 0.5
+  loss_lambda_mmd: 1.0
   mmd_kernel_mul: 2.0
   mmd_kernel_num: 5
   mmd_fix_sigma: null
-  alpha_sum: 1.0
+  alpha_sum: 5.0
+  da_start_epoch: 40
 
   class_weights:
   lr_scheduler: 'cosine'
