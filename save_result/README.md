@@ -11,6 +11,8 @@
 ## 3.mk-mmd
 无alpha仅mmd，$loss=loss_{cls}+\lambda \Sigma loss_{mk-mmd}$，$\lambda=0.5、1.5$
 
-
+### 4.add alpha_sum + mk-mmd
+$loss=loss_{cls}+\lambda \Sigma \alpha_i loss_{mk-mmd_i}$
+且$\Sigma \alpha_i = \alpha _{sum}$
 
 

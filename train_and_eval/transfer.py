@@ -7,7 +7,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from utils.lr_scheduler import build_scheduler
-from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 import os
 from models import get_model
@@ -17,7 +16,7 @@ from data import get_dataloaders
 from metrics.torch_metrics import get_mean_metrics
 from metrics.numpy_metrics import get_classification_metrics, get_per_class_loss
 from metrics.loss_functions import get_loss
-from utils.summaries import write_mean_summaries, write_class_summaries
+from metrics.loss_functions import get_loss_da
 from data import get_loss_data_input
 import pandas as pd
 import shutil
@@ -26,7 +25,7 @@ import glob
 
 
 def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin_cls=False):
-    def train_step(net, src_sample,trg_sample, loss_fn, optimizer, device, loss_input_fn,lambda_mmd):
+    def train_step(net, src_sample,trg_sample, loss_fn, optimizer, device, loss_input_fn, lambda_mmd, loss_function_da):
         optimizer.zero_grad()
         # print(sample['inputs'].shape)
         src_outputs ,src_da_features_list = net(src_sample['inputs'].to(device))
@@ -36,7 +35,7 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
         ground_truth = loss_input_fn(src_sample, device)
 
         if len(src_da_features_list) > 0:
-            loss_mmd, loss_mmd_individuals, layer_weights = loss_fn['mmd'](src_da_features_list, trg_da_features_list)
+            loss_mmd, loss_mmd_individuals, layer_weights = loss_fn[loss_function_da](src_da_features_list, trg_da_features_list)
         else:
             loss_mmd= torch.tensor(0.0, device=device)
             loss_mmd_individuals = []
@@ -133,10 +132,10 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
 
     loss_fn = {'all': get_loss(config, device, reduction=None),
                'mean': get_loss(config, device, reduction="mean"),
-               'mmd': get_loss(config, device, reduction="mmd")}
-
+               'mk-mmd': get_loss_da(config, device, "mk-mmd")}
+    loss_function_da = config['SOLVER']['loss_function_da']
     trainable_params = get_net_trainable_params(net)
-    optimizer = optim.AdamW(trainable_params+list(loss_fn['mmd'].parameters()), lr=lr, weight_decay=weight_decay)
+    optimizer = optim.AdamW(trainable_params+list(loss_fn[loss_function_da].parameters()), lr=lr, weight_decay=weight_decay)
 
     scheduler = build_scheduler(config, optimizer, num_steps_train)
 
@@ -209,7 +208,7 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
 
             abs_step = start_global + (epoch - start_epoch) * num_steps_train + step
             logits, ground_truth, loss, loss_cls, loss_mmd, loss_mmd_list, weight_mmd_list= train_step(net, src_sample,trg_sample, loss_fn, optimizer, device,
-                                                    loss_input_fn=loss_input_fn,lambda_mmd=loss_lambda_mmd)
+                                                    loss_input_fn=loss_input_fn,lambda_mmd=loss_lambda_mmd,loss_function_da=loss_function_da)
             if len(ground_truth) == 2:
                 labels, unk_masks = ground_truth
             else:

@@ -47,16 +47,17 @@ DATASETS:
       num_workers: 4
 
 SOLVER:
-  num_epochs: 150
+  num_epochs: 200
   num_warmup_epochs: 10
   steps: (0, 80000)
   loss_function:  masked_cross_entropy
 
-  loss_function_da:  mmd
+  loss_function_da:  mk-mmd
   loss_lambda_mmd: 0.5
   mmd_kernel_mul: 2.0
   mmd_kernel_num: 5
   mmd_fix_sigma: null
+  alpha_sum: 1.0
 
   class_weights:
   lr_scheduler: 'cosine'

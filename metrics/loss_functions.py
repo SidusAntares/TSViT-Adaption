@@ -1,3 +1,4 @@
+import sys
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -5,6 +6,20 @@ from torch.autograd import Variable
 import torch.nn as nn
 from utils.config_files_utils import get_params_values
 from copy import deepcopy
+
+def get_loss_da(config, device,method):
+    model_config = config['MODEL']
+    loss_config = config['SOLVER']
+    if method in ['mk-mmd']:
+        if method == 'mk-mmd':
+            return DANAdapter(model_config['spatial_depth'],
+                      kernel_mul=loss_config['mmd_kernel_mul'],
+                      kernel_num=loss_config['mmd_kernel_num'],
+                      fix_sigma=loss_config['mmd_fix_sigma'],
+                      alpha_sum=loss_config['alpha_sum'])
+
+    print('wrong da method')
+    sys.exit(1)
 
 
 def get_loss(config, device, reduction='mean'):
@@ -21,10 +36,6 @@ def get_loss(config, device, reduction='mean'):
             config_['SOLVER']['loss_function'] = loss_fun_type
             loss_fun.append(get_loss(config_, device, reduction=reduction))
         return loss_fun
-
-    if reduction == 'mmd':
-        return DANAdapter(model_config['spatial_depth'],
-                          kernel_mul=loss_config['mmd_kernel_mul'], kernel_num=loss_config['mmd_kernel_num'], fix_sigma=loss_config['mmd_fix_sigma'])
 
     else:
     # Cross-Entropy Loss ------------------------------------------------------------------
@@ -411,24 +422,25 @@ class MK_MMD_Loss(nn.Module):
         return torch.clamp(loss, min=0.0)
 
 class DANAdapter(nn.Module):
-    def __init__(self, num_layers, kernel_mul=2.0, kernel_num=5, fix_sigma=None, init_alpha_mode='ones'):
+    def __init__(self, num_layers, kernel_mul=2.0, kernel_num=5, fix_sigma=None, init_alpha_mode='ones',alpha_sum = 1.0):
         super(DANAdapter, self).__init__()
-        self.num_layers = num_layers
+        self.num_layers = num_layers-1
+        self.alpha_sum = alpha_sum
         self.mmd_loss_fn = MK_MMD_Loss(kernel_mul=kernel_mul, kernel_num=kernel_num, fix_sigma=fix_sigma)
         if init_alpha_mode == 'zeros':
-            self.log_alphas = nn.Parameter(torch.zeros(num_layers))
+            self.log_alphas = nn.Parameter(torch.zeros(self.num_layers))
         elif init_alpha_mode == 'ones':
-            self.log_alphas = nn.Parameter(torch.ones(num_layers))
+            self.log_alphas = nn.Parameter(torch.ones(self.num_layers))
         elif init_alpha_mode == 'random':
-            self.log_alphas = nn.Parameter(torch.randn(num_layers) * 0.1)
+            self.log_alphas = nn.Parameter(torch.randn(self.num_layers) * 0.1)
         else:
             raise ValueError("init_alpha_mode must be 'zeros', 'ones', or 'random'")
 
     def forward(self, source_features_list, target_features_list):
-        assert len(source_features_list) == len(target_features_list) == self.num_layers, \
+        assert len(source_features_list) == len(target_features_list) == self.num_layers+1, \
             (f"Mismatch in number of layers. Expected {self.num_layers}, "
              f"got {len(source_features_list)} (source) and {len(target_features_list)} (target).")
-        alphas = torch.exp(self.log_alphas)
+        alphas = F.softmax(torch.cat([self.log_alphas,torch.zeros(1,device=self.log_alphas.device)],dim=0),dim=0)*self.alpha_sum
         total_weighted_loss = 0.0
         individual_losses = []
         weights = []
