@@ -24,25 +24,26 @@ from datetime import datetime
 import glob
 
 
-def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin_cls=False):
-    def train_step(net, src_sample,trg_sample, loss_fn, optimizer, device, loss_input_fn, loss_function_da):
+def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device):
+    def train_step(net, src_sample,trg_sample, loss_fn, optimizer, device, loss_input_fn, loss_function_da, stage):
         optimizer.zero_grad()
-        # print(sample['inputs'].shape)
         src_outputs ,src_da_features_list = net(src_sample['inputs'].to(device))
-        _,trg_da_features_list = net(trg_sample['inputs'].to(device))
-        assert len(src_da_features_list) == len(trg_da_features_list)
         src_outputs = src_outputs.permute(0, 2, 3, 1)
         ground_truth = loss_input_fn(src_sample, device)
-
-        if len(src_da_features_list) > 0:
-            loss_mmd, loss_mmd_individuals, layer_weights = loss_fn[loss_function_da](src_da_features_list, trg_da_features_list)
-        else:
-            loss_mmd= torch.tensor(0.0, device=device)
-            loss_mmd_individuals = []
-            layer_weights = []
-        lambda_mmd = loss_fn['lambda_mmd']
         loss_cls = loss_fn['mean'](src_outputs, ground_truth)
-        loss = loss_cls + lambda_mmd * loss_mmd
+        loss = loss_cls
+
+        loss_mmd= torch.tensor(0.0, device=device)
+        loss_mmd_individuals = []
+        layer_weights = []
+        if stage:
+            _,trg_da_features_list = net(trg_sample['inputs'].to(device))
+            assert len(src_da_features_list) == len(trg_da_features_list)
+            if len(src_da_features_list) > 0:
+                loss_mmd, loss_mmd_individuals, layer_weights = loss_fn[loss_function_da](src_da_features_list, trg_da_features_list)
+            lambda_mmd = loss_fn['lambda_mmd']
+            loss += lambda_mmd * loss_mmd
+
         loss.backward()
         optimizer.step()
         return src_outputs, ground_truth, loss, loss_cls, loss_mmd,\
@@ -206,11 +207,13 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
         epoch_train_loss = 0.0
         num_train_batches = 0
         joint_loaders = enumerate(zip(src_dataloaders['train'],trg_dataloaders['train']))
+        stage = False
+        if epoch > 20 and epoch & 1 :stage = True # epoch 是奇数
         for step, (src_sample,trg_sample) in joint_loaders:
 
             abs_step = start_global + (epoch - start_epoch) * num_steps_train + step
             logits, ground_truth, loss, loss_cls, loss_mmd, loss_mmd_list, weight_mmd_list= train_step(net, src_sample,trg_sample, loss_fn, optimizer, device,
-                                                    loss_input_fn=loss_input_fn,loss_function_da=loss_function_da)
+                                                    loss_input_fn=loss_input_fn,loss_function_da=loss_function_da,stage=stage)
             if len(ground_truth) == 2:
                 labels, unk_masks = ground_truth
             else:

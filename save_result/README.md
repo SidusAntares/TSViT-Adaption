@@ -15,4 +15,12 @@
 $loss=loss_{cls}+\lambda \Sigma \alpha_i loss_{mk-mmd_i}$
 且$\Sigma \alpha_i = \alpha _{sum}$
 
+### 5.stage
+损失设置如4所示 ，加入分阶段
+
+第一阶段只更新分类损失 ，第二阶段更新分类损失+域对齐损失
+
+前数十个epoch只更新分类损失
+
+
 
