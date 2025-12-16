@@ -197,10 +197,14 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device):
     if len(local_device_ids) > 1:
         net = nn.DataParallel(net, device_ids=local_device_ids)
     net.to(device)
+    if loss_function_da == 'mk-mmd':
+        loss_fn[loss_function_da].to(device)
 
     loss_input_fn = get_loss_data_input(config)
 
     net.train()
+    if loss_function_da == 'mk-mmd':
+        loss_fn[loss_function_da].train()
     for epoch in range(start_epoch, start_epoch + num_epochs):  # loop over the dataset multiple times
         epoch_train_loss_cls = 0.0
         epoch_train_loss_mmd = 0.0
@@ -244,6 +248,8 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device):
         avg_train_loss_mmd = epoch_train_loss_mmd / num_train_batches if num_train_batches > 0 else 0.0
         avg_train_loss = epoch_train_loss / num_train_batches if num_train_batches > 0 else 0.0
         print(f"\nRunning Evaluation at End of Epoch {epoch}")
+        if loss_function_da == 'mk-mmd':
+            loss_fn[loss_function_da].train()
         eval_trg_metrics = evaluate(net, trg_dataloaders['eval'], loss_fn, config)
         eval_src_metrics = evaluate(net, src_dataloaders['eval'], loss_fn, config)
         macro_iou = eval_trg_metrics[1]['macro']['IOU']
@@ -284,7 +290,8 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device):
             break
 
         net.train()
-
+        if loss_function_da == 'mk-mmd':
+            loss_fn[loss_function_da].train()
         # --- 定期保存模型 ---
         if epoch % save_epoch_interval == 0:
             checkpoint_filename = os.path.join(metric_save_path, f'{epoch:04d}.pth')

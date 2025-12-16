@@ -8,13 +8,16 @@
 ## 2.add alpha + mk-mmd
 计算每一层mk-mmd，乘以系数alpha再相加，即$loss=loss_{cls}+\lambda \Sigma \alpha_i loss_{mk-mmd_i}$
 
+简单实现的mk-mmd
 ## 3.mk-mmd
 无alpha仅mmd，$loss=loss_{cls}+\lambda \Sigma loss_{mk-mmd}$，$\lambda=0.5、1.5$
 
+简单实现的mk-mmd
 ## 4.add alpha_sum + mk-mmd
 $loss=loss_{cls}+\lambda \Sigma \alpha_i loss_{mk-mmd_i}$
 且$\Sigma \alpha_i = \alpha _{sum}$
 
+简单实现的mk-mmd
 ## 5.stage + mk-mmd
 损失设置如4所示 ，加入分阶段
 
@@ -22,12 +25,15 @@ $loss=loss_{cls}+\lambda \Sigma \alpha_i loss_{mk-mmd_i}$
 
 前数十个epoch只更新分类损失
 
+简单实现的mk-mmd
 ### 1)
 前二十个epoch更新第一阶段，之后交替更新
 
 $\alpha_{sum}$=1.0
 
 $\lambda=0.5$
+
+简单实现的mk-mmd
 ### 2)
 前四十个epoch更新第一阶段，之后一直第二阶段
 
@@ -35,4 +41,14 @@ $\alpha_{sum}$=5.0
 
 $\lambda=1.0$
 
+简单实现的mk-mmd
 
+### 3)
+
+前四十个epoch更新第一阶段，之后一直第二阶段
+
+$\alpha_{sum}$=5.0
+
+$\lambda=1.0$
+
+2015DAN的mk-mmd
