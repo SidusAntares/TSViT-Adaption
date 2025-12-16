@@ -25,7 +25,7 @@ import glob
 
 
 def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin_cls=False):
-    def train_step(net, src_sample,trg_sample, loss_fn, optimizer, device, loss_input_fn, lambda_mmd, loss_function_da):
+    def train_step(net, src_sample,trg_sample, loss_fn, optimizer, device, loss_input_fn, loss_function_da):
         optimizer.zero_grad()
         # print(sample['inputs'].shape)
         src_outputs ,src_da_features_list = net(src_sample['inputs'].to(device))
@@ -40,7 +40,7 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
             loss_mmd= torch.tensor(0.0, device=device)
             loss_mmd_individuals = []
             layer_weights = []
-
+        lambda_mmd = loss_fn['lambda_mmd']
         loss_cls = loss_fn['mean'](src_outputs, ground_truth)
         loss = loss_cls + lambda_mmd * loss_mmd
         loss.backward()
@@ -125,6 +125,10 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
     folder_dir = os.path.join(base_dir, folder_name)
     os.makedirs(base_dir,exist_ok=True)
 
+    lambda_mmd = config['SOLVER']['lambda_mmd']
+    loss_function_da = config['SOLVER']['loss_function_da']
+    loss_lambda_mmd = config['SOLVER']['loss_lambda_mmd']
+
     start_global = 1
     start_epoch = 1
 
@@ -132,8 +136,8 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
 
     loss_fn = {'all': get_loss(config, device, reduction=None),
                'mean': get_loss(config, device, reduction="mean"),
-               'mk-mmd': get_loss_da(config, device, "mk-mmd")}
-    loss_function_da = config['SOLVER']['loss_function_da']
+               'mk-mmd': get_loss_da(config, device, "mk-mmd"),
+               'lambda_mmd':lambda_mmd}
     trainable_params = get_net_trainable_params(net)
     optimizer = optim.AdamW(trainable_params+list(loss_fn[loss_function_da].parameters()), lr=lr, weight_decay=weight_decay)
 
@@ -194,8 +198,6 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
     net.to(device)
 
     loss_input_fn = get_loss_data_input(config)
-    loss_lambda_mmd = config['SOLVER']['loss_lambda_mmd']
-
 
     net.train()
     for epoch in range(start_epoch, start_epoch + num_epochs):  # loop over the dataset multiple times
@@ -208,7 +210,7 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device, lin
 
             abs_step = start_global + (epoch - start_epoch) * num_steps_train + step
             logits, ground_truth, loss, loss_cls, loss_mmd, loss_mmd_list, weight_mmd_list= train_step(net, src_sample,trg_sample, loss_fn, optimizer, device,
-                                                    loss_input_fn=loss_input_fn,lambda_mmd=loss_lambda_mmd,loss_function_da=loss_function_da)
+                                                    loss_input_fn=loss_input_fn,loss_function_da=loss_function_da)
             if len(ground_truth) == 2:
                 labels, unk_masks = ground_truth
             else:
