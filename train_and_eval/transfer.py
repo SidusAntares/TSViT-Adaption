@@ -41,7 +41,7 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device):
             assert len(src_da_features_list) == len(trg_da_features_list)
             if len(src_da_features_list) > 0:
                 loss_mmd, loss_mmd_individuals, layer_weights = loss_fn[loss_function_da](src_da_features_list, trg_da_features_list)
-            lambda_mmd = loss_fn['lambda_mmd']
+            lambda_mmd = loss_fn['loss_lambda_mmd']
             loss += lambda_mmd * loss_mmd
 
         loss.backward()
@@ -126,7 +126,6 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device):
     folder_dir = os.path.join(base_dir, folder_name)
     os.makedirs(base_dir,exist_ok=True)
 
-    lambda_mmd = config['SOLVER']['lambda_mmd']
     loss_function_da = config['SOLVER']['loss_function_da']
     loss_lambda_mmd = config['SOLVER']['loss_lambda_mmd']
 
@@ -138,7 +137,7 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device):
     loss_fn = {'all': get_loss(config, device, reduction=None),
                'mean': get_loss(config, device, reduction="mean"),
                'mk-mmd': get_loss_da(config, device, "mk-mmd"),
-               'lambda_mmd':lambda_mmd}
+               'loss_lambda_mmd':loss_lambda_mmd}
     trainable_params = get_net_trainable_params(net)
     optimizer = optim.AdamW(trainable_params+list(loss_fn[loss_function_da].parameters()), lr=lr, weight_decay=weight_decay)
 
