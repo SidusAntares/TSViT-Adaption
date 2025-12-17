@@ -68,6 +68,7 @@ class Transformer(nn.Module):
         self.layers = nn.ModuleList([])
         self.norm = nn.LayerNorm(dim)
         self.return_medial_output = return_medial_output
+        self.depth = depth
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
                 PreNorm(dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
@@ -75,7 +76,7 @@ class Transformer(nn.Module):
             ]))
         if self.return_medial_output:
             self.medial_layer_norms = nn.ModuleList([
-                nn.LayerNorm(dim) for _ in range(depth)
+                nn.LayerNorm(dim) for _ in range(self.depth-1)
             ])
         else:
             self.medial_layer_norms = None
@@ -86,9 +87,11 @@ class Transformer(nn.Module):
             x = attn(x) + x
             x = ff(x) + x
             if self.return_medial_output:
-                medial_features.append(self.medial_layer_norms[i](x))
+                if i < self.depth - 1:
+                    medial_features.append(self.medial_layer_norms[i](x))
+                else:medial_features.append(self.norm(x))
         if self.return_medial_output:
-            return self.norm(x),medial_features
+            return medial_features[-1],medial_features
         return self.norm(x)
 
 class TSViT(nn.Module):
