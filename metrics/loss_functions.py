@@ -322,12 +322,19 @@ class FocalLoss(nn.Module):
 
 
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+
+
 class MK_MMD_Loss(nn.Module):
     """
     计算 Multi-Kernel Maximum Mean Discrepancy (MK-MMD) 损失。
     基于论文 "Learning Transferable Features with Deep Adaptation Networks" (ICML 2015)。
 
     此版本加入了最优多核选择机制，以提升性能。
+    注意：beta 的更新已被移出 forward 方法，需由外部显式调用 update_beta。
     """
 
     def __init__(self, kernel_mul=2.0, kernel_num=5, fix_sigma=None, eps=1e-3):
@@ -349,6 +356,7 @@ class MK_MMD_Loss(nn.Module):
         self.fix_sigma = fix_sigma
         self.eps = eps
         # 缓存核权重 beta，初始均匀分布
+        # 使用 register_buffer 注册，使其成为模型状态的一部分，但不视为可学习参数
         self.register_buffer('beta', torch.ones(self.kernel_num) / self.kernel_num)
 
     def gaussian_kernel(self, source, target, kernel_mul=2.0, kernel_num=5, fix_sigma=None):
@@ -369,14 +377,13 @@ class MK_MMD_Loss(nn.Module):
         total = torch.cat([source, target], dim=0)  # (Ns+Nt, D)
 
         # 计算 L2 距离平方矩阵 ||x_i - x_j||^2
-        # 使用 p=2 并平方，或者直接使用 'sqeuclidean' (如果 PyTorch 版本支持)
-        L2_distance = torch.cdist(total, total, p=2).pow(2) # (Ns+Nt, Ns+Nt)
+        L2_distance = torch.cdist(total, total, p=2).pow(2)  # (Ns+Nt, Ns+Nt)
 
         if fix_sigma is not None:
             bandwidth = fix_sigma
         else:
             # 根据中位数距离估计带宽 (论文中提到的 median heuristic)
-            distances = L2_distance[L2_distance.ne(0)] # 排除对角线上的 0
+            distances = L2_distance[L2_distance.ne(0)]  # 排除对角线上的 0
             if distances.numel() > 0:
                 bandwidth = torch.median(distances)
                 bandwidth = bandwidth + 1e-6  # 防止为零
@@ -384,9 +391,6 @@ class MK_MMD_Loss(nn.Module):
                 bandwidth = 1.0  # fallback
 
         # 生成多个尺度的核带宽
-        # 论文 Long et al. (2015) footnote 2 提到: gamma_u between 2^-8*gamma and 2^8*gamma
-        # 你的原始设置 kernel_mul=2.0, kernel_num=5 会生成大约 2^-4*gamma 到 2^4*gamma
-        # 这是一种常见的近似方法
         bandwidth /= kernel_mul ** (kernel_num // 2)
         bandwidth_list = [bandwidth * (kernel_mul ** i) for i in range(kernel_num)]
 
@@ -413,27 +417,21 @@ class MK_MMD_Loss(nn.Module):
 
         # 计算 XX 部分的无偏估计 (排除对角线)
         if n > 1:
-            # sum_{i!=j} k(x_i, x_j) = sum(all) - sum(diag)
             XX_sum = XX.sum() - torch.trace(XX)
-            # Number of terms: n*(n-1)
             term_XX = XX_sum / (n * (n - 1))
         else:
-            # If only one sample, XX term is 0
             term_XX = torch.tensor(0.0, device=XX.device)
 
         # 计算 YY 部分的无偏估计 (排除对角线)
         if m > 1:
             YY_sum = YY.sum() - torch.trace(YY)
-            # Number of terms: m*(m-1)
             term_YY = YY_sum / (m * (m - 1))
         else:
-            # If only one sample, YY term is 0
             term_YY = torch.tensor(0.0, device=YY.device)
 
-        # 计算 XY 部分 (无需排除对角线，因为 X!=Y)
+        # 计算 XY 部分 (无需排除对角线)
         if n > 0 and m > 0:
             XY_sum = XY.sum()
-            # Number of terms: n*m
             term_XY = XY_sum / (n * m)
         else:
             term_XY = torch.tensor(0.0, device=XY.device)
@@ -441,11 +439,13 @@ class MK_MMD_Loss(nn.Module):
         mmd2_est = term_XX + term_YY - 2 * term_XY
         return mmd2_est
 
-    def _update_beta(self, source, target):
+    def update_beta(self, source, target):
         """
         根据当前批次数据，更新最优核权重 beta。
         实现论文 Section 3.2 中的 QP 优化 (Eq. 8)。
+        应在计算损失之前调用，以确保计算图一致性。
         """
+        # print("Updating beta...")
         kernels_all = self.gaussian_kernel(
             source, target,
             kernel_mul=self.kernel_mul,
@@ -455,40 +455,30 @@ class MK_MMD_Loss(nn.Module):
         batch_size_s = source.size(0)
         batch_size_t = target.size(0)
 
-        # Step 1: Compute d_u (unbiased MMD estimates) and covariance matrix Q for each pair of kernels
-        # Following Gretton et al. (2012b) notation used in the paper
         m = self.kernel_num
-        d_values = []
-        # Store g_ku(z_i) for covariance calculation
         g_values_per_kernel = [[] for _ in range(m)]
 
-        # Pair up samples for unbiased estimation (as suggested by linear-time MMD)
-        # Assume even batch sizes for simplicity here. Can be adapted for odd.
+        # Pair up samples for unbiased estimation
         num_pairs_s = batch_size_s // 2
         num_pairs_t = batch_size_t // 2
         num_effective_pairs = min(num_pairs_s, num_pairs_t)
 
         if num_effective_pairs == 0:
-            # Not enough data to compute unbiased estimate, keep beta unchanged or reset?
             # print("Warning: Batch size too small for beta update.")
-            return # Keep current beta
+            return  # Keep current beta
 
-        # Sample indices for pairing (simple consecutive pairing)
         s_indices = list(range(batch_size_s))
         t_indices = list(range(batch_size_t))
 
         # Calculate d_u and g_ku values needed for Q matrix
         for i in range(num_effective_pairs):
-            # Indices for source pairs
-            s_idx1, s_idx2 = s_indices[2*i], s_indices[2*i + 1]
-            # Indices for target pairs
-            t_idx1, t_idx2 = t_indices[2*i], t_indices[2*i + 1]
+            s_idx1, s_idx2 = s_indices[2 * i], s_indices[2 * i + 1]
+            t_idx1, t_idx2 = t_indices[2 * i], t_indices[2 * i + 1]
 
-            # Extract features for the quad tuple
-            hs1 = source[s_idx1:s_idx1+1] # Keep dims (1, D)
-            hs2 = source[s_idx2:s_idx2+1]
-            ht1 = target[t_idx1:t_idx1+1]
-            ht2 = target[t_idx2:t_idx2+1]
+            hs1 = source[s_idx1:s_idx1 + 1]  # Keep dims (1, D)
+            hs2 = source[s_idx2:s_idx2 + 1]
+            ht1 = target[t_idx1:t_idx1 + 1]
+            ht2 = target[t_idx2:t_idx2 + 1]
 
             # Compute kernels for this quad tuple for all u
             kernels_quad_tuple = self.gaussian_kernel(
@@ -497,108 +487,99 @@ class MK_MMD_Loss(nn.Module):
                 kernel_mul=self.kernel_mul,
                 kernel_num=self.kernel_num,
                 fix_sigma=self.fix_sigma
-            ) # Each kernel in list is now (4, 4)
+            )
 
             for u, k_tensor in enumerate(kernels_quad_tuple):
-                # Extract relevant parts for g_ku calculation on this quad tuple
                 # k(hs1, hs2) + k(ht1, ht2) - k(hs1, ht1) - k(hs2, ht2)
-                # Assuming order in total tensor: [hs1, hs2, ht1, ht2]
                 g_ku = k_tensor[0, 1] + k_tensor[2, 3] - k_tensor[0, 2] - k_tensor[1, 3]
-                g_values_per_kernel[u].append(g_ku.item()) # Store scalar value
+                g_values_per_kernel[u].append(g_ku.item())
 
-        # Convert lists to tensors for easier computation
         try:
-            g_tensors = [torch.tensor(g_vals, dtype=torch.float32, device=source.device) for g_vals in g_values_per_kernel]
+            g_tensors = [torch.tensor(g_vals, dtype=torch.float32, device=source.device) for g_vals in
+                         g_values_per_kernel]
         except:
             # Handle case where g_values might be empty due to insufficient data
+            # print("Warning: Failed to create g_tensors for beta update.")
             return
 
         # Compute d_u = mean of g_ku values
-        d_values = torch.stack([torch.mean(g_t) for g_t in g_tensors]) # Shape: (m,)
+        d_values = torch.stack([torch.mean(g_t) for g_t in g_tensors])  # Shape: (m,)
 
         # Compute Covariance matrix Q (m x m)
         Q = torch.zeros((m, m), dtype=torch.float32, device=source.device)
         for u in range(m):
             for v in range(m):
                 if len(g_tensors[u]) > 1 and len(g_tensors[v]) > 1:
-                    # Cov[g_ku, g_kv] = E[g_ku * g_kv] - E[g_ku] * E[g_kv]
-                    # Use bessel correction (ddof=1) for sample covariance
-                    cov_uv = torch.mean(g_tensors[u] * g_tensors[v]) - torch.mean(g_tensors[u]) * torch.mean(g_tensors[v])
+                    cov_uv = torch.mean(g_tensors[u] * g_tensors[v]) - torch.mean(g_tensors[u]) * torch.mean(
+                        g_tensors[v])
                     Q[u, v] = cov_uv
-                # Else leave as zero if not enough data
 
         # Regularize Q to make it positive definite
         Q = Q + self.eps * torch.eye(m, device=Q.device)
 
-        # Step 2: Solve Quadratic Program (Eq. 8): min_beta beta^T Q beta s.t. sum(beta)=1, beta>=0
-        # This is a standard QP problem. We'll use a simple iterative solver or approximate.
-        # For simplicity here, let's use a basic projected gradient descent or call a QP solver if available.
-        # PyTorch doesn't have a built-in QP solver, so we'll implement a basic version.
-        # Alternatively, one could use cvxpy or scipy.optimize, but that breaks pure pytorch dependency.
-
-        # Simple Gradient Descent approach for QP (projected onto simplex)
-        # Minimize f(beta) = 0.5 * beta^T Q beta
-        # Subject to A_eq * beta = b_eq (sum(beta) = 1) and beta >= 0
-
-        # Initialize beta (already done in __init__ and stored in buffer)
-        beta = self.beta.clone().detach() # Start from current beta
-        lr = 1.0 # Learning rate - needs tuning
+        # Solve Quadratic Program: min_beta 0.5 * beta^T Q beta s.t. sum(beta)=1, beta>=0
+        # Using projected gradient descent onto the simplex
+        beta = self.beta.clone().detach()  # Start from current beta
+        lr = 1.0
         max_iter = 100
         tol = 1e-6
 
         for _ in range(max_iter):
-            grad = Q @ beta # Gradient of 0.5 * beta^T Q beta
+            grad = Q @ beta
             beta_new = beta - lr * grad
-
-            # Project onto simplex (sum=1, beta>=0) - Simplex projection algorithm
             beta_projected = self._project_simplex(beta_new)
-
-            # Check convergence
             if torch.norm(beta_projected - beta, p=2) < tol:
                 break
             beta = beta_projected
 
-        # Update the stored beta buffer
-        with torch.no_grad(): # Ensure no gradients flow through this update
-            self.beta.copy_(beta_projected)
-
+        # Update the stored beta buffer using .data.copy_ to avoid autograd issues
+        # This ensures the buffer is updated without affecting the computation graph
+        # of losses computed later in the same forward pass.
+        self.beta.data.copy_(beta_projected.data)
+        # print(f"Beta updated to: {self.beta}")
 
     def _project_simplex(self, v):
         """Project vector v onto the probability simplex."""
-        # Sort v in descending order
         mu, indices = torch.sort(v, descending=True)
-        # Compute cumulative sum
         cumsum = torch.cumsum(mu, dim=0)
-        # Find rho (largest index satisfying the condition)
         arange = torch.arange(1, len(v) + 1, dtype=v.dtype, device=v.device)
         cond = mu - (cumsum - 1) / arange > 0
-        rho = torch.where(cond)[0][-1] if torch.any(cond) else 0 # Get last True index or 0
-        # Compute theta
-        theta = (cumsum[rho] - 1) / (rho + 1)
-        # Apply thresholding
+        # Handle potential issue with cond being all False
+        valid_cond = torch.where(cond)[0]
+        if valid_cond.numel() > 0:
+            rho = valid_cond[-1] # Get last True index
+        else:
+            rho = torch.tensor(0, device=v.device) # Fallback
+        # Ensure rho is within valid range for indexing
+        rho_value = torch.clamp(rho, 0, len(cumsum) - 1)
+        theta = (cumsum[rho_value] - 1) / (rho_value + 1)
         projected = torch.clamp(v - theta, min=0)
         # Renormalize to ensure sum is exactly 1 (numerical stability)
-        projected = projected / (projected.sum() + 1e-12)
+        projected_sum = projected.sum()
+        if projected_sum > 0:
+            projected = projected / (projected_sum + 1e-12)
+        else:
+            # Handle edge case where projection results in all zeros
+            # Reinitialize to uniform distribution or handle gracefully
+            projected = torch.ones_like(projected) / len(projected)
         return projected
 
-    def forward(self, source, target, update_beta=True):
+    def forward(self, source, target):
         """
         计算 MK-MMD 损失。
+        注意：beta 的更新必须在调用此函数之前完成。
 
         Args:
             source (Tensor): 源域特征，形状 (N_source, D)。
             target (Tensor): 目标域特征，形状 (N_target, D)。
-            update_beta (bool): 是否在此前向传播中更新最优核权重 beta。
-                                通常在训练过程中启用，在验证/测试时禁用。
 
         Returns:
             Tensor: 标量 MK-MMD 损失值。
         """
         batch_size_source = int(source.size()[0])
 
-        # 可选：更新 beta 权重
-        if self.training and update_beta:
-            self._update_beta(source.detach(), target.detach()) # Detach to avoid gradients flowing back through beta update
+        # *** 关键修改：移除了内部的 self._update_beta 调用 ***
+        # beta 更新现在由使用者（如 DANAdapter）负责在计算损失前调用 update_beta
 
         # 获取所有核的 Gram 矩阵
         kernels = self.gaussian_kernel(
@@ -609,31 +590,34 @@ class MK_MMD_Loss(nn.Module):
         )
 
         # 使用当前存储的 beta 权重对核进行加权组合
-        # joint_kernel = sum(beta_u * K_u)
+        # 在整个 forward pass 中使用固定的 self.beta
         weighted_kernels = [self.beta[i] * k for i, k in enumerate(kernels)]
         joint_kernel = sum(weighted_kernels)
 
         # 分割联合核矩阵
-        XX = joint_kernel[:batch_size_source, :batch_size_source]  # Source-Source
-        YY = joint_kernel[batch_size_source:, batch_size_source:]  # Target-Target
-        XY = joint_kernel[:batch_size_source, batch_size_source:]  # Source-Target
+        XX = joint_kernel[:batch_size_source, :batch_size_source].clone()  # Source-Source
+        YY = joint_kernel[batch_size_source:, batch_size_source:].clone()  # Target-Target
+        XY = joint_kernel[:batch_size_source, batch_size_source:].clone()  # Source-Target
 
         # 计算 MK-MMD^2 (使用无偏估计)
-        # loss = E[k(x,x')] + E[k(y,y')] - 2E[k(x,y')]
-        # loss = torch.mean(XX) + torch.mean(YY) - 2 * torch.mean(XY) # Biased V-statistic
-        # 使用无偏估计 (更符合论文)
         loss = self._compute_mk_mmd_unbiased(XX, YY, XY)
 
         # 确保损失非负
-        return torch.clamp(loss, min=0.0)
+        clamped_loss = torch.clamp(loss, min=0.0)
+        # print(f"Computed MMD Loss: {clamped_loss.item()}")
+        return clamped_loss
 
 
 class DANAdapter(nn.Module):
-    def __init__(self, num_layers, kernel_mul=2.0, kernel_num=5, fix_sigma=None, init_alpha_mode='ones',alpha_sum = 1.0):
+    def __init__(self, num_layers, kernel_mul=2.0, kernel_num=5, fix_sigma=None, init_alpha_mode='ones',
+                 alpha_sum=1.0):
         super(DANAdapter, self).__init__()
-        self.num_layers = num_layers-1
+        self.num_layers = num_layers - 1 # Adjust based on your layer counting logic
         self.alpha_sum = alpha_sum
+        # 实例化 MK_MMD_Loss 模块
         self.mmd_loss_fn = MK_MMD_Loss(kernel_mul=kernel_mul, kernel_num=kernel_num, fix_sigma=fix_sigma)
+
+        # 可学习的 alpha 参数 (logits before softmax)
         if init_alpha_mode == 'zeros':
             self.log_alphas = nn.Parameter(torch.zeros(self.num_layers))
         elif init_alpha_mode == 'ones':
@@ -644,22 +628,83 @@ class DANAdapter(nn.Module):
             raise ValueError("init_alpha_mode must be 'zeros', 'ones', or 'random'")
 
     def forward(self, source_features_list, target_features_list):
-        assert len(source_features_list) == len(target_features_list) == self.num_layers+1, \
-            (f"Mismatch in number of layers. Expected {self.num_layers}, "
+        """
+        计算 DAN 适配损失。
+
+        Args:
+            source_features_list (list[Tensor]): 源域各层特征列表。
+            target_features_list (list[Tensor]): 目标域各层特征列表。
+
+        Returns:
+            tuple: (total_weighted_loss, individual_losses, weights)
+                   - total_weighted_loss (Tensor): 总的加权 MMD 损失。
+                   - individual_losses (list[Tensor]): 各层的 MMD 损失。
+                   - weights (list[Tensor]): 各层对应的 alpha 权重。
+        """
+        assert len(source_features_list) == len(target_features_list) == self.num_layers + 1, \
+            (f"Mismatch in number of layers. Expected {self.num_layers + 1}, "
              f"got {len(source_features_list)} (source) and {len(target_features_list)} (target).")
-        alphas = F.softmax(torch.cat([self.log_alphas,torch.zeros(1,device=self.log_alphas.device)],dim=0),dim=0)*self.alpha_sum
+
+        # 计算 Softmax 归一化的 Alpha 权重
+        # 添加一个虚拟的 log_alpha (通常设为0) 以匹配层数，然后进行 softmax
+        extended_log_alphas = torch.cat([self.log_alphas, torch.zeros(1, device=self.log_alphas.device)], dim=0)
+        alphas = F.softmax(extended_log_alphas, dim=0) * self.alpha_sum
+
+        # *** 关键修改：在循环前显式更新 beta ***
+        # 选择用于更新 beta 的层索引 (例如，最后一个共享层)
+        # 这里的索引需要根据你的网络结构和特征列表含义来确定
+        # 假设 -2 是一个合适的层 (倒数第二层)
+        idx_for_beta_update = -2
+        # 确保索引有效
+        if -len(source_features_list) <= idx_for_beta_update < len(source_features_list):
+            src_feat_beta = source_features_list[idx_for_beta_update]
+            tgt_feat_beta = target_features_list[idx_for_beta_update]
+
+            # Flatten features if necessary for MMD calculation
+            if src_feat_beta.dim() > 2:
+                src_feat_beta_flat = src_feat_beta.view(src_feat_beta.size(0), -1)
+            else:
+                src_feat_beta_flat = src_feat_beta
+
+            if tgt_feat_beta.dim() > 2:
+                tgt_feat_beta_flat = tgt_feat_beta.view(tgt_feat_beta.size(0), -1)
+            else:
+                tgt_feat_beta_flat = tgt_feat_beta
+
+            # 调用 MK_MMD_Loss 的 update_beta 方法
+            # 使用 detach() 确保 beta 更新过程不影响主网络梯度
+            # print("Calling update_beta from DANAdapter...")
+            self.mmd_loss_fn.update_beta(src_feat_beta_flat.detach(), tgt_feat_beta_flat.detach())
+        else:
+            print(f"Warning: Invalid index {idx_for_beta_update} for beta update in DANAdapter.")
+
+        # 计算各层的加权 MMD 损失
         total_weighted_loss = 0.0
         individual_losses = []
         weights = []
+
+        # 遍历所有层的特征 (或根据需要调整范围)
+        # 这里假设计算所有层的 MMD
         for i, (src_feat, tgt_feat) in enumerate(zip(source_features_list, target_features_list)):
+            # Flatten features if they are multi-dimensional (e.g., conv features)
             if src_feat.dim() > 2:
-                src_feat = src_feat.view(src_feat.size(0), -1)
+                src_feat_flat = src_feat.view(src_feat.size(0), -1)
+            else:
+                src_feat_flat = src_feat
+
             if tgt_feat.dim() > 2:
-                tgt_feat = tgt_feat.view(tgt_feat.size(0), -1)
-            current_loss = self.mmd_loss_fn(src_feat, tgt_feat)
+                tgt_feat_flat = tgt_feat.view(tgt_feat.size(0), -1)
+            else:
+                tgt_feat_flat = tgt_feat
+
+            # 调用 MK_MMD_Loss.forward，使用已在循环前更新的固定 beta
+            current_loss = self.mmd_loss_fn(src_feat_flat, tgt_feat_flat)
+
             current_alpha = alphas[i]
             weighted_loss = current_alpha * current_loss
             total_weighted_loss += weighted_loss
             individual_losses.append(current_loss)
             weights.append(current_alpha)
+
         return total_weighted_loss, individual_losses, weights
+
