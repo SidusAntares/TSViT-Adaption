@@ -76,10 +76,9 @@ class ToTensor(object):
         self.label_type = label_type
         self.ground_truths = ground_truths
         self.band_cal = {
-            'blue': 0,   # B2 (Blue)
             'green': 1,  # B3 (Green) - 用于 NDWI
             'red': 2,    # B4 (Red)  - 用于 NDVI
-            'nir': 6}
+            'nir': 6}   # B8 (NIR)
 
     def __call__(self, sample):
         tensor_sample = {}
@@ -152,19 +151,13 @@ class Normalize(object):
                                     [[1767.7100830078125]],
                                     [[1458.963623046875]],
                                     [[1299.2833251953125]]]]).astype(np.float32)
-        # Shape [1, 2, 1, 1]
-        self.mean_ndvi_ndwi = np.array([[[[0.0]],[0.0]]]).astype(np.float32)
-        # Shape [1, 2, 1, 1]
-        self.std_ndvi_ndwi = np.array([[[[1.0]],[1.0]]]).astype(np.float32)
-        # Final shape [1, 12, 1, 1]
-        self.mean_fold1 = np.concatenate((self.mean_fold1, self.mean_ndvi_ndwi), axis=1)
-        # Final shape [1, 12, 1, 1]
-        self.std_fold1 = np.concatenate((self.std_fold1, self.std_ndvi_ndwi), axis=1)
+
 
     def __call__(self, sample):
         # print('mean: ', sample['img'].mean(dim=(0,2,3)))
         # print('std : ', sample['img'].std(dim=(0,2,3)))
-        sample['inputs'] = (sample['inputs'] - self.mean_fold1) / self.std_fold1
+        sample['inputs'][:, :-2, :, :] = (sample['inputs'][:, :-2, :, :] - self.mean_fold1) / self.std_fold1
+        sample['inputs'][:, -2:, :, :] = (sample['inputs'][:, -2:, :, :] + 1.0) / 2.0
         sample['doy'] = sample['doy'] / 365.0001
         return sample
 

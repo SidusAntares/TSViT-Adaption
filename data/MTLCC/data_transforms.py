@@ -49,7 +49,7 @@ def MTLCC_transform(model_config, data_config, is_training):
         transform_list.append(OneHotDates(N=doy_bins))
     transform_list.append(TileDates(H=img_res, W=img_res, doy_bins=doy_bins))  # tile day and year to shape TxWxHx1
     # transform_list.append(Concat(concat_keys=['x10', 'x20', 'x60', 'year','day']))  # concat x10, x20, x60, day, year
-    transform_list.append(Concat(concat_keys=['x10', 'x20', 'x60', 'day', 'year']))  # concat x10, x20, x60, day, year
+    transform_list.append(Concat(concat_keys=['x10', 'x20', 'x60', 'day', 'year', 'ndvi' , 'ndwi']))  # concat x10, x20, x60, day, year
     transform_list.append(
         CutOrPad(max_seq_len=max_seq_len, random_sample=True))  # pad with zeros to maximum sequence length
     if is_training:
@@ -90,7 +90,14 @@ class ToTensor(object):
             doy = torch.tensor(np.array(sample['doy']).astype(np.float32))
             year = torch.tensor(0.).repeat(len(sample['doy'])) + 2016
             labels = torch.tensor(sample['labels'].astype(np.float32)).unsqueeze(dim=0).unsqueeze(dim=-1)
-            sample = {"x10": x10, "x20": x20, "x60": x60, "day": doy, "year": year, "labels": labels}
+            red_band = torch.tensor(sample['B04'].astype(np.float32)).permute(1, 2, 3, 0)
+            nir_band = torch.tensor(sample['B08'].astype(np.float32)).permute(1, 2, 3, 0)
+            green_band = torch.tensor(sample['B03'].astype(np.float32)).permute(1, 2, 3, 0)
+            epsilon = 1e-8
+            ndvi = ((nir_band - red_band) / (nir_band + red_band + epsilon)).unsqueeze(1) # Shape: T x 1 x H x W
+            ndwi = ((green_band - nir_band) / (green_band + nir_band + epsilon)).unsqueeze(1) # Shape: T x 1 x H x W
+
+            sample = {"x10": x10, "x20": x20, "x60": x60, "day": doy, "year": year, "labels": labels, "ndvi": ndvi, "ndwi": ndwi}
             return sample
         # else:
         sample['x10'] = torch.tensor(sample['x10']).type(torch.float32)
@@ -101,6 +108,13 @@ class ToTensor(object):
         sample['labels'] = torch.unsqueeze(
             torch.from_numpy(sample['labels'].astype(np.int64)),
             dim=-1)
+        # sample['x10'].shape torch.Size([vary, 24, 24, 4])
+        red_band = sample['x10'][...,0]
+        nir_band = sample['x10'][...,3]
+        green_band = sample['x10'][...,1]
+        epsilon = 1e-8
+        sample['ndvi'] = ((nir_band - red_band) / (nir_band + red_band + epsilon)).unsqueeze(-1)
+        sample['ndwi'] = ((green_band - nir_band) / (green_band + nir_band + epsilon)).unsqueeze(-1)
         return sample
 
 
@@ -157,6 +171,8 @@ class Normalize(object):
         sample['x10'] = sample['x10'] * 1e-4
         sample['x20'] = sample['x20'] * 1e-4
         sample['x60'] = sample['x60'] * 1e-4
+        sample['ndvi'] = (sample['ndvi'] + 1.0) / 2.0
+        sample['ndwi'] = (sample['ndwi'] + 1.0) / 2.0
         sample['day'] = sample['day'] / 365.0001  # 365 + h, h = 0.0001 to avoid placing day 365 in out of bounds bin
         sample['year'] = sample['year'] - 2016
         return sample
@@ -256,8 +272,8 @@ class Concat(object):
         inputs = torch.cat([sample[key] for key in self.concat_keys], dim=-1)
         sample["inputs"] = inputs
         sample = {key: sample[key] for key in sample.keys() if key not in self.concat_keys}
-        sample["inputs"] = torch.cat([sample["inputs"][..., 0:10], sample["inputs"][..., 13].unsqueeze(-1)], dim=-1)[
-            ..., [2, 1, 0, 4, 5, 6, 3, 7, 8, 9, 10]]
+        sample["inputs"] = torch.cat([sample["inputs"][..., 0:10], sample["inputs"][..., 13].unsqueeze(-1),sample["inputs"][..., -2:]], dim=-1)[
+            ..., [2, 1, 0, 4, 5, 6, 3, 7, 8, 9, 10, 11, 12]]
         return sample
 
 
