@@ -69,19 +69,32 @@ class ToTensor(object):
     """
     Convert ndarrays in sample to Tensors.
     items in  : x10, x20, x60, day, year, labels
-    items out : x10, x20, x60, day, year, labels
+    items out : x10, x20, x60, day, year, ndvi, nwdi, labels
     """
 
     def __init__(self, label_type='groups', ground_truths=[]):
         self.label_type = label_type
         self.ground_truths = ground_truths
+        self.band_cal = {
+            'blue': 0,   # B2 (Blue)
+            'green': 1,  # B3 (Green) - 用于 NDWI
+            'red': 2,    # B4 (Red)  - 用于 NDVI
+            'nir': 6}
 
     def __call__(self, sample):
         tensor_sample = {}
         tensor_sample['inputs'] = torch.tensor(sample['img']).to(torch.float32)
-        # tensor_sample['labels'] = torch.tensor(sample['labels'][0].astype(np.float32)).to(torch.float32).unsqueeze(-1)
         tensor_sample['labels'] = torch.tensor(sample['labels'].astype(np.float32)).to(torch.float32)
         tensor_sample['doy'] = torch.tensor(np.array(sample['doy'])).to(torch.float32)
+
+        red_band = tensor_sample['inputs'][:, self.band_cal['red'], :, :]   # Shape: T x H x W
+        nir_band = tensor_sample['inputs'][:, self.band_cal['nir'], :, :]   # Shape: T x H x W
+        green_band = tensor_sample['inputs'][:, self.band_cal['green'], :, :] # Shape: T x H x W
+        epsilon = 1e-8
+        ndvi = ((nir_band - red_band) / (nir_band + red_band + epsilon)).unsqueeze(1) # Shape: T x 1 x H x W
+        ndwi = ((green_band - nir_band) / (green_band + nir_band + epsilon)).unsqueeze(1) # Shape: T x 1 x H x W
+        tensor_sample['inputs'] = torch.cat((tensor_sample['inputs'], ndvi, ndwi), dim=1) # Result: T x (C+2) x H x W
+
         return tensor_sample
 
 
@@ -139,6 +152,14 @@ class Normalize(object):
                                     [[1767.7100830078125]],
                                     [[1458.963623046875]],
                                     [[1299.2833251953125]]]]).astype(np.float32)
+        # Shape [1, 2, 1, 1]
+        self.mean_ndvi_ndwi = np.array([[[[0.0]],[0.0]]]).astype(np.float32)
+        # Shape [1, 2, 1, 1]
+        self.std_ndvi_ndwi = np.array([[[[1.0]],[1.0]]]).astype(np.float32)
+        # Final shape [1, 12, 1, 1]
+        self.mean_fold1 = np.concatenate((self.mean_fold1, self.mean_ndvi_ndwi), axis=1)
+        # Final shape [1, 12, 1, 1]
+        self.std_fold1 = np.concatenate((self.std_fold1, self.std_ndvi_ndwi), axis=1)
 
     def __call__(self, sample):
         # print('mean: ', sample['img'].mean(dim=(0,2,3)))
