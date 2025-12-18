@@ -52,3 +52,7 @@ $\alpha_{sum}$=5.0
 $\lambda=1.0$
 
 2015DAN的mk-mmd
+
+### 4)
+
+在3)的基础上，添加ndvi，ndwi通道

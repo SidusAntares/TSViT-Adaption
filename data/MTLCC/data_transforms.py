@@ -49,7 +49,7 @@ def MTLCC_transform(model_config, data_config, is_training):
         transform_list.append(OneHotDates(N=doy_bins))
     transform_list.append(TileDates(H=img_res, W=img_res, doy_bins=doy_bins))  # tile day and year to shape TxWxHx1
     # transform_list.append(Concat(concat_keys=['x10', 'x20', 'x60', 'year','day']))  # concat x10, x20, x60, day, year
-    transform_list.append(Concat(concat_keys=['x10', 'x20', 'x60', 'day', 'year', 'ndvi' , 'ndwi']))  # concat x10, x20, x60, day, year
+    transform_list.append(Concat(concat_keys=['x10', 'x20', 'x60' , 'year', 'ndvi' , 'ndwi' ,'day']))  # concat x10, x20, x60, day, year
     transform_list.append(
         CutOrPad(max_seq_len=max_seq_len, random_sample=True))  # pad with zeros to maximum sequence length
     if is_training:
@@ -272,7 +272,7 @@ class Concat(object):
         inputs = torch.cat([sample[key] for key in self.concat_keys], dim=-1)
         sample["inputs"] = inputs
         sample = {key: sample[key] for key in sample.keys() if key not in self.concat_keys}
-        sample["inputs"] = torch.cat([sample["inputs"][..., 0:10], sample["inputs"][..., 13].unsqueeze(-1),sample["inputs"][..., -2:]], dim=-1)[
+        sample["inputs"] = torch.cat([sample["inputs"][..., 0:10], sample["inputs"][..., -3:]], dim=-1)[
             ..., [2, 1, 0, 4, 5, 6, 3, 7, 8, 9, 10, 11, 12]]
         return sample
 
