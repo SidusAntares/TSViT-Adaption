@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="Python 3.10" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.8.12 WSL (Ubuntu-22.04): (/home/sidusantares/miniconda3/envs/tsvit_raincoat/bin/python)" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.8.12 WSL (Ubuntu-22.04): (/home/sidusantares/miniconda3/envs/tsvit_csdi/bin/python3)" project-jdk-type="Python SDK" />
 </project>

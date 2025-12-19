@@ -140,7 +140,9 @@ class Normalize(object):
                                      [[3205.90185546875]],
                                      [[3319.109619140625]],
                                      [[2422.904296875]],
-                                     [[1639.370361328125]]]]).astype(np.float32)
+                                     [[1639.370361328125]],
+                                     [[1.8763047e+05]],
+                                     [[-8.5625656e+04]]]]).astype(np.float32)
         self.std_fold1 = np.array([[[[1942.6156005859375]],
                                     [[1881.9234619140625]],
                                     [[1959.3798828125]],
@@ -150,14 +152,15 @@ class Normalize(object):
                                     [[1784.860595703125]],
                                     [[1767.7100830078125]],
                                     [[1458.963623046875]],
-                                    [[1299.2833251953125]]]]).astype(np.float32)
+                                    [[1299.2833251953125]],
+                                    [[1.7078574e+08]],
+                                    [[9.6143080e+07]]]]).astype(np.float32)
 
 
     def __call__(self, sample):
         # print('mean: ', sample['img'].mean(dim=(0,2,3)))
         # print('std : ', sample['img'].std(dim=(0,2,3)))
-        sample['inputs'][:, :-2, :, :] = (sample['inputs'][:, :-2, :, :] - self.mean_fold1) / self.std_fold1
-        sample['inputs'][:, -2:, :, :] = (sample['inputs'][:, -2:, :, :] + 1.0) / 2.0
+        sample['inputs'] = (sample['inputs'] - self.mean_fold1) / self.std_fold1
         sample['doy'] = sample['doy'] / 365.0001
         return sample
 

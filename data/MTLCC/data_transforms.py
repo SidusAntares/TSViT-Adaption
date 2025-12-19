@@ -166,13 +166,45 @@ class Normalize(object):
     items in  : x10, x20, x60, day, year, labels
     items out : x10, x20, x60, day, year, labels
     """
+    def __init__(self):
+        self.mean = np.array([[[[
+            2477.869873046875,  # Index 0
+            2452.353759765625,  # Index 1
+            2662.123046875,  # Index 2
+            3919.22314453125,  # Index 3
+            2741.33447265625,  # Index 4
+            3616.39404296875,  # Index 5
+            4060.180908203125,  # Index 6
 
+            4261.0517578125,  # Index 7
+            2448.90771484375,  # Index 8
+            1769.9674072265625,  # Index 9
+            0.32847732305526733,  # Index 10
+            -0.2967391014099121  # Index 11
+        ]]]]).astype(np.float32)  # Shape: (1, 1, 1, 12)
+
+        # --- 修改后的 Std ---
+        self.std = np.array([[[[
+            2389.637939453125,  # Index 0
+            2098.740478515625,  # Index 1
+            2261.7177734375,  # Index 2
+            2013.645263671875,  # Index 3
+            2351.843994140625,  # Index 4
+            2088.8203125,  # Index 5
+            2056.3037109375,  # Index 6
+
+            2040.4764404296875,  # Index 7
+            1378.877197265625,  # Index 8
+            1239.74755859375,  # Index 9
+            0.2575685679912567,  # Index 10
+            0.20177412033081055  # Index 11
+        ]]]]).astype(np.float32)  # Shape: (1, 1, 1, 12)
     def __call__(self, sample):
-        sample['x10'] = sample['x10'] * 1e-4
-        sample['x20'] = sample['x20'] * 1e-4
-        sample['x60'] = sample['x60'] * 1e-4
-        sample['ndvi'] = (sample['ndvi'] + 1.0) / 2.0
-        sample['ndwi'] = (sample['ndwi'] + 1.0) / 2.0
+        sample['x10']= (sample['x10'] - self.mean[...,:4]) / self.std[...,:4]
+        sample['x20']= (sample['x20'] - self.mean[...,4:10]) / self.std[...,4:10]
+        sample['x60']= sample['x60'] * 1e-4
+        sample['ndvi']= (sample['ndvi'] - self.mean[...,-2]) / self.std[...,-2]
+        sample['ndwi']= (sample['ndwi'] - self.mean[...,-1]) / self.std[...,-1]
         sample['day'] = sample['day'] / 365.0001  # 365 + h, h = 0.0001 to avoid placing day 365 in out of bounds bin
         sample['year'] = sample['year'] - 2016
         return sample
