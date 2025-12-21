@@ -11,7 +11,7 @@ from utils.config_files_utils import get_params_values, read_yaml
 DATASET_INFO = read_yaml("data/datasets.yaml")
 
 
-def main_get_dataloaders(config, domain):
+def get_dataloaders(config, domain):
 
 
     model_config = config['MODEL']

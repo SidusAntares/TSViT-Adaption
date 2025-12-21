@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from diff_models import diff_CSDI
+from models.CSDI.diff_models import diff_CSDI
 
 
 class CSDI_base(nn.Module):
@@ -76,7 +76,7 @@ class CSDI_base(nn.Module):
             if self.target_strategy == "mix" and mask_choice > 0.5:
                 cond_mask[i] = rand_mask[i]
             else:  # draw another sample for histmask (i-1 corresponds to another sample)
-                cond_mask[i] = cond_mask[i] * for_pattern_mask[i - 1] 
+                cond_mask[i] = cond_mask[i] * for_pattern_mask[i - 1]
         return cond_mask
 
     def get_test_pattern_mask(self, observed_mask, test_pattern_mask):

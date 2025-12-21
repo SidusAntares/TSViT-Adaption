@@ -7,7 +7,7 @@ import argparse
 import torch
 import os
 from utils.config_files_utils import read_yaml, copy_yaml, get_params_values
-from data import main_get_dataloaders
+from data import get_dataloaders as main_get_dataloaders
 from models.CSDI.dataset import get_dataloader
 from datetime import datetime
 from models.CSDI.main_model import CSDI_da
@@ -36,7 +36,7 @@ src_dataloaders = main_get_dataloaders(main_config, 'src')
 trg_dataloaders = main_get_dataloaders(main_config, 'trg')
 
 
-with open('base.yaml', "r") as f:
+with open('models/CSDI/base.yaml', "r") as f:
     config = yaml.safe_load(f)
 
 config["model"]["is_unconditional"] = args.unconditional
@@ -44,7 +44,7 @@ config["model"]["test_missing_ratio"] = args.testmissingratio
 
 print(json.dumps(config, indent=4))
 
-current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
 foldername = "./save" + str(args.nfold) + "_" + current_time + "/"
 print('model folder:', foldername)
 os.makedirs(foldername, exist_ok=True)
@@ -52,6 +52,8 @@ with open(foldername + "config.json", "w") as f:
     json.dump(config, f, indent=4)
 
 train_loader, valid_loader, test_loader = get_dataloader(
+    src_dataloaders=src_dataloaders,
+    trg_dataloaders=trg_dataloaders,
     seed=args.seed,
     nfold=args.nfold,
     batch_size=config["train"]["batch_size"],

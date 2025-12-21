@@ -19,7 +19,7 @@ import os
 from models import get_model
 from utils.config_files_utils import read_yaml, copy_yaml, get_params_values
 from utils.torch_utils import get_device, get_net_trainable_params, load_from_checkpoint
-from data import main_get_dataloaders
+from data import get_dataloaders
 
 from datetime import datetime
 from models.CSDI.main_model import CSDI_Physio
@@ -31,8 +31,8 @@ save_path = '/data/user/ViT/TSViT-Adaption/test/look_dataset/germany'
 os.makedirs(save_path, exist_ok=True)  # 确保保存路径存在
 
 main_config = read_yaml(config_file)
-src_dataloaders = main_get_dataloaders(main_config, 'src')
-trg_dataloaders = main_get_dataloaders(main_config, 'trg')
+src_dataloaders = get_dataloaders(main_config, 'src')
+trg_dataloaders = get_dataloaders(main_config, 'trg')
 for sample in src_dataloaders['train']:
     aligned_values,_ = align(sample)
     print(aligned_values)
