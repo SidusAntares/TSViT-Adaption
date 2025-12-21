@@ -1,24 +1,14 @@
-import argparse
-import torch
-import datetime
 import json
 import yaml
-import os
 import sys
 import os
 sys.path.insert(0, os.getcwd())
 import argparse
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from utils.lr_scheduler import build_scheduler
-import numpy as np
 import os
-from models import get_model
 from utils.config_files_utils import read_yaml, copy_yaml, get_params_values
-from utils.torch_utils import get_device, get_net_trainable_params, load_from_checkpoint
-from data import get_dataloaders
-
+from data import main_get_dataloaders
+from models.CSDI.dataset import get_dataloader
 from datetime import datetime
 from models.CSDI.main_model import CSDI_da
 from models.CSDI.utils import train, evaluate
@@ -28,8 +18,8 @@ parser = argparse.ArgumentParser(description="CSDI")
 parser.add_argument("--seed", type=int, default=1)
 parser.add_argument("--testmissingratio", type=float, default=0.1)
 parser.add_argument(
-    "--nfold", type=int, default=0, help="for 5fold test (valid value:[0-4])"
-)
+    "--nfold", type=int, default=0, help="for 5fold test (valid value:[0-4])")
+parser.add_argument('--device', default='cuda:0', help='Device for Attack')
 parser.add_argument("--unconditional", action="store_true")
 parser.add_argument("--modelfolder", type=str, default="")
 parser.add_argument("--nsample", type=int, default=100)
@@ -42,8 +32,8 @@ save_path = '/data/user/ViT/TSViT-Adaption/test/look_dataset/germany'
 os.makedirs(save_path, exist_ok=True)  # 确保保存路径存在
 
 main_config = read_yaml(config_file)
-src_dataloaders = get_dataloaders(main_config, 'src')
-trg_dataloaders = get_dataloaders(main_config, 'trg')
+src_dataloaders = main_get_dataloaders(main_config, 'src')
+trg_dataloaders = main_get_dataloaders(main_config, 'trg')
 
 
 with open('base.yaml', "r") as f:
@@ -68,7 +58,7 @@ train_loader, valid_loader, test_loader = get_dataloader(
     missing_ratio=config["model"]["test_missing_ratio"],
 )
 
-model = CSDI_Physio(config, args.device).to(args.device)
+model = CSDI_da(config, args.device).to(args.device)
 
 if args.modelfolder == "":
     train(

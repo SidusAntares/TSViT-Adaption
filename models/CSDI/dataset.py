@@ -36,7 +36,7 @@ def align(values_list):
 
 
 class daDataset(Dataset):
-    def __init__(self, original_dataloader, missing_ratio=0.1, seed=0, use_index_list=None):
+    def __init__(self, src_dataloaders,trg_dataloaders, missing_ratio=0.1, seed=0, use_index_list=None):
         """
         original_dataloader: 原始 dataloader，返回 {'inputs': (B, T, C+1, H, W)}
         missing_ratio: 隐藏比例
@@ -49,8 +49,9 @@ class daDataset(Dataset):
 
         # 预加载所有样本
         all_samples = []
-        for batch in original_dataloader:
-            inputs = batch['inputs']
+        original_dataloader = zip(src_dataloaders['train'], trg_dataloaders['train'])
+        for src_batch,trg_batch in original_dataloader:
+            inputs = torch.cat((src_batch['inputs'], trg_batch['inputs']),dim=0)
             aligned_vals, observed_masks = align(inputs)
             N, L, C = aligned_vals.shape
             aligned_vals = aligned_vals.cpu().numpy()
@@ -96,75 +97,66 @@ class daDataset(Dataset):
             "timepoints": torch.tensor(item['timepoints'], dtype=torch.long),
         }
 
-    def get_dataloader(seed=1, nfold=None, batch_size=16, missing_ratio=0.1, original_dataloader=None):
-        """
-        构建 train/valid/test DataLoader，支持 5-fold 划分。
+def get_dataloader(seed=1, nfold=None, batch_size=16, missing_ratio=0.1, src_dataloaders = None,trg_dataloaders = None):
 
-        Args:
-            seed: 随机种子
-            nfold: int in [0,4]，指定测试 fold；若为 None，则不分 fold（全部用于训练）
-            batch_size: 批大小
-            missing_ratio: 掩码比例
-            original_dataloader: 原始 dataloader（必须提供！）
-
-        Returns:
-            train_loader, valid_loader, test_loader
-        """
-        assert original_dataloader is not None, "original_dataloader must be provided!"
+    assert src_dataloaders is not None, "original_dataloader must be provided!"
 
         # 第一次加载全部数据以获取总长度和索引
-        full_dataset = daDataset(
-            original_dataloader=original_dataloader,
-            missing_ratio=missing_ratio,
-            seed=seed,
-            use_index_list=None  # 加载全部
-        )
-        total_len = len(full_dataset)
-        indlist = np.arange(total_len)
+    full_dataset = daDataset(
+        src_dataloaders = src_dataloaders,
+        trg_dataloaders = trg_dataloaders,
+        missing_ratio=missing_ratio,
+        seed=seed,
+        use_index_list=None  # 加载全部
+    )
+    total_len = len(full_dataset)
+    indlist = np.arange(total_len)
+    np.random.seed(seed)
+    np.random.shuffle(indlist)
 
-        np.random.seed(seed)
-        np.random.shuffle(indlist)
-
-        if nfold is not None and 0 <= nfold <= 4:
+    if nfold is not None and 0 <= nfold <= 4:
             # 5-fold: 20% test
             start = int(nfold * 0.2 * total_len)
             end = int((nfold + 1) * 0.2 * total_len)
             test_index = indlist[start:end]
             remain_index = np.delete(indlist, np.arange(start, end))
-        else:
+    else:
             # 不做 fold 划分：全部作为训练（可选）
             test_index = []
             remain_index = indlist
 
-        # 在 remaining 中划分 train / valid (70% / 30% of remaining ≈ 56% / 24% of total)
-        np.random.seed(seed)
-        np.random.shuffle(remain_index)
-        num_train = int(len(remain_index) * 0.7)
-        train_index = remain_index[:num_train]
-        valid_index = remain_index[num_train:]
+    # 在 remaining 中划分 train / valid (70% / 30% of remaining ≈ 56% / 24% of total)
+    np.random.seed(seed)
+    np.random.shuffle(remain_index)
+    num_train = int(len(remain_index) * 0.7)
+    train_index = remain_index[:num_train]
+    valid_index = remain_index[num_train:]
 
         # 创建三个子数据集
-        train_dataset = daDataset(
-            original_dataloader=original_dataloader,
-            missing_ratio=missing_ratio,
-            seed=seed,
-            use_index_list=train_index.tolist()
-        )
-        valid_dataset = daDataset(
-            original_dataloader=original_dataloader,
-            missing_ratio=missing_ratio,
-            seed=seed,
-            use_index_list=valid_index.tolist()
-        )
-        test_dataset = daDataset(
-            original_dataloader=original_dataloader,
-            missing_ratio=missing_ratio,
-            seed=seed,
-            use_index_list=test_index.tolist()
-        )
+    train_dataset = daDataset(
+        src_dataloaders=src_dataloaders,
+        trg_dataloaders=trg_dataloaders,
+        missing_ratio=missing_ratio,
+        seed=seed,
+        use_index_list=train_index.tolist()
+    )
+    valid_dataset = daDataset(
+        src_dataloaders=src_dataloaders,
+        trg_dataloaders=trg_dataloaders,
+        missing_ratio=missing_ratio,
+        seed=seed,
+        use_index_list=valid_index.tolist()
+    )
+    test_dataset = daDataset(
+        src_dataloaders=src_dataloaders,
+        trg_dataloaders=trg_dataloaders,
+        missing_ratio=missing_ratio,
+        seed=seed,
+        use_index_list=test_index.tolist()
+    )
 
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-        return train_loader, valid_loader, test_loader
+    return train_loader, valid_loader, test_loader

@@ -12,7 +12,7 @@ import os
 from models import get_model
 from utils.config_files_utils import read_yaml, copy_yaml, get_params_values
 from utils.torch_utils import get_device, get_net_trainable_params, load_from_checkpoint
-from data import get_dataloaders
+from data import main_get_dataloaders
 from metrics.torch_metrics import get_mean_metrics
 from metrics.numpy_metrics import get_classification_metrics, get_per_class_loss
 from metrics.loss_functions import get_loss
@@ -333,8 +333,8 @@ if __name__ == "__main__":
     config = read_yaml(config_file)
     config['local_device_ids'] = device_ids
 
-    src_dataloaders = get_dataloaders(config,'src')
-    trg_dataloaders = get_dataloaders(config,'trg')
+    src_dataloaders = main_get_dataloaders(config, 'src')
+    trg_dataloaders = main_get_dataloaders(config, 'trg')
 
     net = get_model(config, device)
 

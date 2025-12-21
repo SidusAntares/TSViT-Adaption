@@ -6,13 +6,13 @@ import torch
 import numpy as np
 import pandas as pd
 from utils.config_files_utils import read_yaml
-from data import get_dataloaders
+from data import main_get_dataloaders
 
 dir = 'configs/transfer/PASTIS.yaml'
 # dir = 'configs/transfer/Germany.yaml'
 config = read_yaml(dir)
 folder = os.path.splitext(os.path.basename(dir))[0]
-dataloaders = get_dataloaders(config)
+dataloaders = main_get_dataloaders(config)
 name_dict = {0: 'beet', 1: 'meadow', 2: 'potatoes',
              3: 'winter wheat', 4: 'winter barley', 5: 'corn'}
 

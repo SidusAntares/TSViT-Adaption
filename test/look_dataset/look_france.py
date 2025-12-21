@@ -10,7 +10,7 @@ import os
 from models import get_model
 from utils.config_files_utils import read_yaml, get_params_values
 from utils.torch_utils import get_device, get_net_trainable_params, load_from_checkpoint
-from data import get_dataloaders
+from data import main_get_dataloaders
 from metrics.torch_metrics import get_mean_metrics
 from metrics.numpy_metrics import get_classification_metrics, get_per_class_loss
 from metrics.loss_functions import get_loss
@@ -85,7 +85,7 @@ if __name__ == "__main__":
     # collect_path = '/data/user/Raincoat/data/PASTIS/pastis_function_cubic.pt'
     # save_path = '/data/user/Raincoat/data/PASTIS_and_Germany'
     save_path = '/data/user/ViT/D3/test/look_dataset'
-    dataloaders = get_dataloaders(config)
+    dataloaders = main_get_dataloaders(config)
 
     # process("train",save_path, dataloaders, config)
     process("eval",save_path, dataloaders, config)
