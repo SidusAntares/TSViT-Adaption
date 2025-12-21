@@ -45,7 +45,7 @@ config["model"]["test_missing_ratio"] = args.testmissingratio
 print(json.dumps(config, indent=4))
 
 current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-foldername = "./save" + str(args.nfold) + "_" + current_time + "/"
+foldername = "./metric_save/CSDI/save" + str(args.nfold) + "_" + current_time + "/"
 print('model folder:', foldername)
 os.makedirs(foldername, exist_ok=True)
 with open(foldername + "config.json", "w") as f:
