@@ -74,12 +74,7 @@ class Transformer(nn.Module):
                 PreNorm(dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
                 PreNorm(dim, FeedForward(dim, mlp_dim, dropout=dropout))
             ]))
-        if self.return_medial_output:
-            self.medial_layer_norms = nn.ModuleList([
-                nn.LayerNorm(dim) for _ in range(self.depth-1)
-            ])
-        else:
-            self.medial_layer_norms = None
+
 
     def forward(self, x):
         medial_features = []
@@ -87,11 +82,9 @@ class Transformer(nn.Module):
             x = attn(x) + x
             x = ff(x) + x
             if self.return_medial_output:
-                if i < self.depth - 1:
-                    medial_features.append(self.medial_layer_norms[i](x))
-                else:medial_features.append(self.norm(x))
+                medial_features.append(x)
         if self.return_medial_output:
-            return medial_features[-1],medial_features
+            return self.norm(x),medial_features
         return self.norm(x)
 
 class TSViT(nn.Module):
@@ -155,7 +148,9 @@ class TSViT(nn.Module):
 
         xt = xt.reshape(-1, 366)
         temporal_pos_embedding = self.to_temporal_embedding_input(xt).reshape(B, T, self.dim)
+        # print("1: ",x.shape)torch.Size([8, 16, 12, 24, 24])
         x = self.to_patch_embedding(x)
+        # print("2: ",x.shape) torch.Size([1152, 16, 128])
         x = x.reshape(B, -1, T, self.dim)
         x += temporal_pos_embedding.unsqueeze(1)
         x = x.reshape(-1, T, self.dim)

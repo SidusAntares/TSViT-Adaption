@@ -1,6 +1,6 @@
 import sys
 import os
-
+import torch.nn.functional as F
 sys.path.insert(0, os.getcwd())
 import argparse
 import torch
@@ -38,6 +38,8 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device):
         layer_weights = []
         if stage:
             _,trg_da_features_list = net(trg_sample['inputs'].to(device))
+            src_da_features_list = [F.normalize(feat, p=2, dim=1) for feat in src_da_features_list]
+            trg_da_features_list = [F.normalize(feat, p=2, dim=1) for feat in trg_da_features_list]
             assert len(src_da_features_list) == len(trg_da_features_list)
             if len(src_da_features_list) > 0:
                 loss_mmd, loss_mmd_individuals, layer_weights = loss_fn[loss_function_da](src_da_features_list, trg_da_features_list)
@@ -333,8 +335,8 @@ if __name__ == "__main__":
     config = read_yaml(config_file)
     config['local_device_ids'] = device_ids
 
-    src_dataloaders = get_dataloaders(config, 'src')
-    trg_dataloaders = get_dataloaders(config, 'trg')
+    src_dataloaders = get_dataloaders(config,'src')
+    trg_dataloaders = get_dataloaders(config,'trg')
 
     net = get_model(config, device)
 

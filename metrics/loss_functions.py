@@ -7,16 +7,17 @@ import torch.nn as nn
 from utils.config_files_utils import get_params_values
 from copy import deepcopy
 
-def get_loss_da(config, device,method):
+
+def get_loss_da(config, device, method):
     model_config = config['MODEL']
     loss_config = config['SOLVER']
     if method in ['mk-mmd']:
         if method == 'mk-mmd':
             return DANAdapter(model_config['spatial_depth'],
-                      kernel_mul=loss_config['mmd_kernel_mul'],
-                      kernel_num=loss_config['mmd_kernel_num'],
-                      fix_sigma=loss_config['mmd_fix_sigma'],
-                      alpha_sum=loss_config['alpha_sum'])
+                              kernel_mul=loss_config['mmd_kernel_mul'],
+                              kernel_num=loss_config['mmd_kernel_num'],
+                              fix_sigma=loss_config['mmd_fix_sigma'],
+                              alpha_sum=loss_config['alpha_sum']).to(device)
 
     print('wrong da method')
     sys.exit(1)
@@ -38,7 +39,7 @@ def get_loss(config, device, reduction='mean'):
         return loss_fun
 
     else:
-    # Cross-Entropy Loss ------------------------------------------------------------------
+        # Cross-Entropy Loss ------------------------------------------------------------------
         if loss_config['loss_function'] == 'cross_entropy':
             num_classes = get_params_values(model_config, 'num_classes', None)
             weight = torch.Tensor(num_classes * [1.0]).to(device)
@@ -46,8 +47,8 @@ def get_loss(config, device, reduction='mean'):
                 for key in loss_config['class_weights']:
                     weight[key] = loss_config['class_weights'][key]
             return torch.nn.CrossEntropyLoss(weight=weight, reduction=reduction)
-    
-    # Masked Cross-Entropy Loss -----------------------------------------------------------
+
+        # Masked Cross-Entropy Loss -----------------------------------------------------------
         elif loss_config['loss_function'] == 'masked_cross_entropy':
             mean = reduction == 'mean'
             return MaskedCrossEntropyLoss(mean=mean)
@@ -129,7 +130,7 @@ class MaskedCrossEntropyLoss(torch.nn.Module):
         """
         super(MaskedCrossEntropyLoss, self).__init__()
         self.mean = mean
-    
+
     def forward(self, logits, ground_truth):
         """
             Args:
@@ -154,7 +155,7 @@ class MaskedCrossEntropyLoss(torch.nn.Module):
             target, mask = ground_truth
         else:
             raise ValueError("ground_truth parameter for MaskedCrossEntropyLoss is either (target, mask) or (target)")
-        
+
         if mask is not None:
             mask_flat = mask.reshape(-1, 1)  # (N*H*W x 1)
             nclasses = logits.shape[-1]
@@ -283,6 +284,7 @@ class FocalLoss(nn.Module):
     """
     Credits to  github.com/clcarwin/focal_loss_pytorch
     """
+
     def __init__(self, gamma=0, alpha=None, reduction=None):
         super(FocalLoss, self).__init__()
         self.gamma = gamma
@@ -290,7 +292,7 @@ class FocalLoss(nn.Module):
         if isinstance(alpha, (float, int)): self.alpha = torch.Tensor([alpha, 1 - alpha])
         if isinstance(alpha, list): self.alpha = torch.Tensor(alpha)
         self.reduction = reduction
-        
+
     def forward(self, input, target):
         if input.dim() > 2:
             input = input.view(input.size(0), input.size(1), -1)  # N,C,H,W => N,C,H*W
@@ -319,7 +321,6 @@ class FocalLoss(nn.Module):
         else:
             raise ValueError(
                 "FocalLoss: reduction parameter not in list of acceptable values [\"mean\", \"sum\", None]")
-
 
 
 import torch
@@ -547,9 +548,9 @@ class MK_MMD_Loss(nn.Module):
         # Handle potential issue with cond being all False
         valid_cond = torch.where(cond)[0]
         if valid_cond.numel() > 0:
-            rho = valid_cond[-1] # Get last True index
+            rho = valid_cond[-1]  # Get last True index
         else:
-            rho = torch.tensor(0, device=v.device) # Fallback
+            rho = torch.tensor(0, device=v.device)  # Fallback
         # Ensure rho is within valid range for indexing
         rho_value = torch.clamp(rho, 0, len(cumsum) - 1)
         theta = (cumsum[rho_value] - 1) / (rho_value + 1)
@@ -612,7 +613,7 @@ class DANAdapter(nn.Module):
     def __init__(self, num_layers, kernel_mul=2.0, kernel_num=5, fix_sigma=None, init_alpha_mode='ones',
                  alpha_sum=1.0):
         super(DANAdapter, self).__init__()
-        self.num_layers = num_layers - 1 # Adjust based on your layer counting logic
+        self.num_layers = num_layers - 1  # Adjust based on your layer counting logic
         self.alpha_sum = alpha_sum
         # 实例化 MK_MMD_Loss 模块
         self.mmd_loss_fn = MK_MMD_Loss(kernel_mul=kernel_mul, kernel_num=kernel_num, fix_sigma=fix_sigma)
@@ -705,6 +706,36 @@ class DANAdapter(nn.Module):
             total_weighted_loss += weighted_loss
             individual_losses.append(current_loss)
             weights.append(current_alpha)
+
+#=======================================调试代码===========================================
+        if torch.rand(1).item() < 0.05:  # 随机打印 5% 的 batch
+            with torch.no_grad():
+                # 获取用于 beta 更新那一层的带宽（需临时调用 gaussian_kernel）
+                src_debug = source_features_list[idx_for_beta_update]
+                tgt_debug = target_features_list[idx_for_beta_update]
+                src_debug_flat = src_debug.view(src_debug.size(0), -1) if src_debug.dim() > 2 else src_debug
+                tgt_debug_flat = tgt_debug.view(tgt_debug.size(0), -1) if tgt_debug.dim() > 2 else tgt_debug
+                kernels_debug = self.mmd_loss_fn.gaussian_kernel(
+                    src_debug_flat, tgt_debug_flat,
+                    kernel_mul=self.mmd_loss_fn.kernel_mul,
+                    kernel_num=self.mmd_loss_fn.kernel_num,
+                    fix_sigma=self.mmd_loss_fn.fix_sigma
+                )
+                # 重新估算 bandwidth（与 update_beta 中逻辑一致）
+                total_debug = torch.cat([src_debug_flat, tgt_debug_flat], dim=0)
+                L2_dist = torch.cdist(total_debug, total_debug, p=2).pow(2)
+                distances = L2_dist[L2_dist != 0]
+                if distances.numel() > 0:
+                    bandwidth_val = torch.median(distances).item() + 1e-6
+                else:
+                    bandwidth_val = 1.0
+
+                print(f"[DEBUG] Bandwidth (median heuristic): {bandwidth_val:.4f}")
+                print(f"[DEBUG] Beta (optimal kernel weights): {self.mmd_loss_fn.beta.detach().cpu().numpy()}")
+                print(f"[DEBUG] MMD loss per layer: {[round(l.item(), 6) for l in individual_losses]}")
+                print(f"[DEBUG] Alpha weights per layer: {[round(w.item(), 4) for w in weights]}")
+
+# =======================================调试代码===========================================
 
         return total_weighted_loss, individual_losses, weights
 
