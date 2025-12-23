@@ -1,5 +1,5 @@
 from models.TSViT.TSViTdense import TSViT, TSViT_mlp_da
-from models.TSViT.TSViTdense_extract import TSViT_extract
+
 
 
 def get_model(config, device):
