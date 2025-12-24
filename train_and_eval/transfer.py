@@ -142,7 +142,7 @@ def train_and_evaluate(net, src_dataloaders,trg_dataloaders, config, device):
                'mk-mmd': get_loss_da(config, device, "mk-mmd"),
                'loss_lambda_mmd':loss_lambda_mmd}
     trainable_params = get_net_trainable_params(net)
-    optimizer = optim.AdamW(trainable_params+list(loss_fn[loss_function_da].parameters()), lr=lr, weight_decay=weight_decay)
+    optimizer = optim.AdamW(trainable_params, lr=lr, weight_decay=weight_decay)
 
     scheduler = build_scheduler(config, optimizer, num_steps_train)
 

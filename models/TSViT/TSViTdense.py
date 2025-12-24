@@ -216,18 +216,17 @@ class TSViT_mlp_da(nn.Module):
                                                 self.dim * self.scale_dim, self.dropout)
         self.space_pos_embedding = nn.Parameter(torch.randn(1, num_patches, self.dim))
         self.space_transformer = Transformer(self.dim, self.spatial_depth, self.heads, self.dim_head, self.dim * self.scale_dim,
-                                             self.dropout,return_medial_output=True)
+                                             self.dropout)
         self.dropout = nn.Dropout(self.emb_dropout)
         self.mlp_head = nn.Sequential(
             nn.LayerNorm(self.dim),
-            nn.Linear(self.dim, self.dim/2)
+            nn.Linear(self.dim, self.dim//2)
         )
         self.mlp_head2 = nn.Sequential(
-            nn.LayerNorm(self.dim/2),
-            nn.Linear(self.dim/2, self.patch_size**2)
+            nn.LayerNorm(self.dim//2),
+            nn.Linear(self.dim//2, self.patch_size**2)
         )
-        # --- 新增 DA 特定模块 ---
-        self.se_block = SEBlock(self.num_classes,self.num_patches_1d ** 2, 6,16)
+
 
 
     def forward(self, x):
@@ -254,9 +253,11 @@ class TSViT_mlp_da(nn.Module):
         x = x.reshape(B, self.num_patches_1d**2, self.num_classes, self.dim).permute(0, 2, 1, 3).reshape(B*self.num_classes, self.num_patches_1d**2, self.dim)
         x += self.space_pos_embedding#[:, :, :(n + 1)]
         x = self.dropout(x)
-        x, medial_features = self.space_transformer(x) # (B×num_classes, num_patches_1d^2 , dim)
+        x = self.space_transformer(x) # (B×num_classes, num_patches_1d^2 , dim)
         x = self.mlp_head(x.reshape(-1, self.dim))
-        da_features_list = [x]
+        da_features = x.reshape(B, -1, self.num_patches_1d**2, self.patch_size**2).permute(0, 2, 3, 1)
+        da_features = da_features.reshape(B, H* W, -1)
+        da_features_list = [ da_features]
         x = self.mlp_head2(x)
         x = x.reshape(B, self.num_classes, self.num_patches_1d**2, self.patch_size**2).permute(0, 2, 3, 1)
         x = x.reshape(B, H, W, self.num_classes)

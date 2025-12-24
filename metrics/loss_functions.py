@@ -16,8 +16,7 @@ def get_loss_da(config, device, method):
             return DANAdapter(model_config['spatial_depth'],
                               kernel_mul=loss_config['mmd_kernel_mul'],
                               kernel_num=loss_config['mmd_kernel_num'],
-                              fix_sigma=loss_config['mmd_fix_sigma'],
-                              alpha_sum=loss_config['alpha_sum']).to(device)
+                              fix_sigma=loss_config['mmd_fix_sigma']).to(device)
 
     print('wrong da method')
     sys.exit(1)
@@ -440,13 +439,34 @@ class MK_MMD_Loss(nn.Module):
         mmd2_est = term_XX + term_YY - 2 * term_XY
         return mmd2_est
 
-    def update_beta(self, source, target):
+    def update_beta(self, source, target, max_samples=512):
         """
         根据当前批次数据，更新最优核权重 beta。
         实现论文 Section 3.2 中的 QP 优化 (Eq. 8)。
         应在计算损失之前调用，以确保计算图一致性。
+
+        Args:
+            source (Tensor): 源域特征，形状 (N_s, D)
+            target (Tensor): 目标域特征，形状 (N_t, D)
+            max_samples (int): 为避免 OOM，对 source + target 总 token 数进行采样的上限。
+                               默认 512，可根据显存调整。
         """
-        # print("Updating beta...")
+        # ====== Step 1: 安全采样，防止 OOM ======
+        N_s, N_t = source.size(0), target.size(0)
+        if N_s + N_t > max_samples:
+            n_s_sample = min(N_s, max_samples // 2)
+            n_t_sample = min(N_t, max_samples - n_s_sample)
+            idx_s = torch.randperm(N_s, device=source.device)[:n_s_sample]
+            idx_t = torch.randperm(N_t, device=target.device)[:n_t_sample]
+            source = source[idx_s]
+            target = target[idx_t]
+            N_s, N_t = n_s_sample, n_t_sample
+
+        # 如果采样后样本太少，无法进行 beta 更新
+        if N_s < 2 or N_t < 2:
+            return  # 保持当前 beta
+
+        # ====== Step 2: 使用采样后的特征进行 beta 更新 ======
         kernels_all = self.gaussian_kernel(
             source, target,
             kernel_mul=self.kernel_mul,
@@ -465,7 +485,6 @@ class MK_MMD_Loss(nn.Module):
         num_effective_pairs = min(num_pairs_s, num_pairs_t)
 
         if num_effective_pairs == 0:
-            # print("Warning: Batch size too small for beta update.")
             return  # Keep current beta
 
         s_indices = list(range(batch_size_s))
@@ -476,12 +495,13 @@ class MK_MMD_Loss(nn.Module):
             s_idx1, s_idx2 = s_indices[2 * i], s_indices[2 * i + 1]
             t_idx1, t_idx2 = t_indices[2 * i], t_indices[2 * i + 1]
 
-            hs1 = source[s_idx1:s_idx1 + 1]  # Keep dims (1, D)
+            hs1 = source[s_idx1:s_idx1 + 1]  # (1, D)
             hs2 = source[s_idx2:s_idx2 + 1]
             ht1 = target[t_idx1:t_idx1 + 1]
             ht2 = target[t_idx2:t_idx2 + 1]
 
-            # Compute kernels for this quad tuple for all u
+            # ⚠️ 再次对 quad tuple 进行采样？不需要，因为已经很小了
+            # 直接调用 gaussian_kernel（此时最多 4 个点，安全）
             kernels_quad_tuple = self.gaussian_kernel(
                 torch.cat([hs1, hs2], dim=0),
                 torch.cat([ht1, ht2], dim=0),
@@ -495,16 +515,18 @@ class MK_MMD_Loss(nn.Module):
                 g_ku = k_tensor[0, 1] + k_tensor[2, 3] - k_tensor[0, 2] - k_tensor[1, 3]
                 g_values_per_kernel[u].append(g_ku.item())
 
+        # Handle empty g_values (should not happen after sampling check, but safe)
+        if all(len(g_vals) == 0 for g_vals in g_values_per_kernel):
+            return
+
         try:
             g_tensors = [torch.tensor(g_vals, dtype=torch.float32, device=source.device) for g_vals in
                          g_values_per_kernel]
-        except:
-            # Handle case where g_values might be empty due to insufficient data
-            # print("Warning: Failed to create g_tensors for beta update.")
+        except Exception:
             return
 
         # Compute d_u = mean of g_ku values
-        d_values = torch.stack([torch.mean(g_t) for g_t in g_tensors])  # Shape: (m,)
+        d_values = torch.stack([torch.mean(g_t) for g_t in g_tensors])  # (m,)
 
         # Compute Covariance matrix Q (m x m)
         Q = torch.zeros((m, m), dtype=torch.float32, device=source.device)
@@ -518,9 +540,8 @@ class MK_MMD_Loss(nn.Module):
         # Regularize Q to make it positive definite
         Q = Q + self.eps * torch.eye(m, device=Q.device)
 
-        # Solve Quadratic Program: min_beta 0.5 * beta^T Q beta s.t. sum(beta)=1, beta>=0
-        # Using projected gradient descent onto the simplex
-        beta = self.beta.clone().detach()  # Start from current beta
+        # Solve Quadratic Program via projected gradient descent
+        beta = self.beta.clone().detach()
         lr = 1.0
         max_iter = 100
         tol = 1e-6
@@ -533,11 +554,8 @@ class MK_MMD_Loss(nn.Module):
                 break
             beta = beta_projected
 
-        # Update the stored beta buffer using .data.copy_ to avoid autograd issues
-        # This ensures the buffer is updated without affecting the computation graph
-        # of losses computed later in the same forward pass.
+        # Update the buffer
         self.beta.data.copy_(beta_projected.data)
-        # print(f"Beta updated to: {self.beta}")
 
     def _project_simplex(self, v):
         """Project vector v onto the probability simplex."""
@@ -565,24 +583,36 @@ class MK_MMD_Loss(nn.Module):
             projected = torch.ones_like(projected) / len(projected)
         return projected
 
-    def forward(self, source, target):
+    def forward(self, source, target, max_samples=512):
         """
-        计算 MK-MMD 损失。
-        注意：beta 的更新必须在调用此函数之前完成。
+        计算 MK-MMD 损失，支持大 N 的特征。
 
         Args:
-            source (Tensor): 源域特征，形状 (N_source, D)。
-            target (Tensor): 目标域特征，形状 (N_target, D)。
-
-        Returns:
-            Tensor: 标量 MK-MMD 损失值。
+            source (Tensor): (N_s, D)
+            target (Tensor): (N_t, D)
+            max_samples (int): 最大采样 token 数。若 N_s + N_t > max_samples，则随机采样。
         """
-        batch_size_source = int(source.size()[0])
+        N_s, D = source.shape
+        N_t = target.shape[0]
 
-        # *** 关键修改：移除了内部的 self._update_beta 调用 ***
-        # beta 更新现在由使用者（如 DANAdapter）负责在计算损失前调用 update_beta
+        # ====== 关键：如果总 token 数太大，进行随机采样 ======
+        if N_s + N_t > max_samples:
+            # 分别对 source 和 target 采样，保持比例（可选）
+            # 简单起见：各采样 max_samples // 2
+            n_s_sample = min(N_s, max_samples // 2)
+            n_t_sample = min(N_t, max_samples - n_s_sample)
 
-        # 获取所有核的 Gram 矩阵
+            idx_s = torch.randperm(N_s)[:n_s_sample]
+            idx_t = torch.randperm(N_t)[:n_t_sample]
+
+            source = source[idx_s]  # (n_s, D)
+            target = target[idx_t]  # (n_t, D)
+
+            # 更新 N_s, N_t
+            N_s, N_t = n_s_sample, n_t_sample
+
+        # ====== 后续逻辑不变 ======
+        batch_size_source = N_s
         kernels = self.gaussian_kernel(
             source, target,
             kernel_mul=self.kernel_mul,
@@ -590,43 +620,25 @@ class MK_MMD_Loss(nn.Module):
             fix_sigma=self.fix_sigma
         )
 
-        # 使用当前存储的 beta 权重对核进行加权组合
-        # 在整个 forward pass 中使用固定的 self.beta
         weighted_kernels = [self.beta[i] * k for i, k in enumerate(kernels)]
         joint_kernel = sum(weighted_kernels)
 
-        # 分割联合核矩阵
-        XX = joint_kernel[:batch_size_source, :batch_size_source].clone()  # Source-Source
-        YY = joint_kernel[batch_size_source:, batch_size_source:].clone()  # Target-Target
-        XY = joint_kernel[:batch_size_source, batch_size_source:].clone()  # Source-Target
+        XX = joint_kernel[:batch_size_source, :batch_size_source]
+        YY = joint_kernel[batch_size_source:, batch_size_source:]
+        XY = joint_kernel[:batch_size_source, batch_size_source:]
 
-        # 计算 MK-MMD^2 (使用无偏估计)
         loss = self._compute_mk_mmd_unbiased(XX, YY, XY)
-
-        # 确保损失非负
-        clamped_loss = torch.clamp(loss, min=0.0)
-        # print(f"Computed MMD Loss: {clamped_loss.item()}")
-        return clamped_loss
+        return torch.clamp(loss, min=0.0)
 
 
 class DANAdapter(nn.Module):
-    def __init__(self, num_layers, kernel_mul=2.0, kernel_num=5, fix_sigma=None, init_alpha_mode='ones',
-                 alpha_sum=1.0):
+    def __init__(self, num_layers, kernel_mul=2.0, kernel_num=5, fix_sigma=None):
         super(DANAdapter, self).__init__()
         self.num_layers = num_layers - 1  # Adjust based on your layer counting logic
-        self.alpha_sum = alpha_sum
+
         # 实例化 MK_MMD_Loss 模块
         self.mmd_loss_fn = MK_MMD_Loss(kernel_mul=kernel_mul, kernel_num=kernel_num, fix_sigma=fix_sigma)
 
-        # 可学习的 alpha 参数 (logits before softmax)
-        if init_alpha_mode == 'zeros':
-            self.log_alphas = nn.Parameter(torch.zeros(self.num_layers))
-        elif init_alpha_mode == 'ones':
-            self.log_alphas = nn.Parameter(torch.ones(self.num_layers))
-        elif init_alpha_mode == 'random':
-            self.log_alphas = nn.Parameter(torch.randn(self.num_layers) * 0.1)
-        else:
-            raise ValueError("init_alpha_mode must be 'zeros', 'ones', or 'random'")
 
     def forward(self, source_features_list, target_features_list):
         """
@@ -642,43 +654,40 @@ class DANAdapter(nn.Module):
                    - individual_losses (list[Tensor]): 各层的 MMD 损失。
                    - weights (list[Tensor]): 各层对应的 alpha 权重。
         """
-        assert len(source_features_list) == len(target_features_list) == self.num_layers + 1, \
-            (f"Mismatch in number of layers. Expected {self.num_layers + 1}, "
-             f"got {len(source_features_list)} (source) and {len(target_features_list)} (target).")
+        assert len(source_features_list) == len(target_features_list) , \
+            f"got {len(source_features_list)} (source) and {len(target_features_list)} (target)."
 
-        # 计算 Softmax 归一化的 Alpha 权重
-        # 添加一个虚拟的 log_alpha (通常设为0) 以匹配层数，然后进行 softmax
-        extended_log_alphas = torch.cat([self.log_alphas, torch.zeros(1, device=self.log_alphas.device)], dim=0)
-        alphas = F.softmax(extended_log_alphas, dim=0) * self.alpha_sum
+
 
         # *** 关键修改：在循环前显式更新 beta ***
         # 选择用于更新 beta 的层索引 (例如，最后一个共享层)
         # 这里的索引需要根据你的网络结构和特征列表含义来确定
-        # 假设 -2 是一个合适的层 (倒数第二层)
-        idx_for_beta_update = -2
-        # 确保索引有效
-        if -len(source_features_list) <= idx_for_beta_update < len(source_features_list):
-            src_feat_beta = source_features_list[idx_for_beta_update]
-            tgt_feat_beta = target_features_list[idx_for_beta_update]
+        # 动态选择用于 beta 更新的特征层
+        L = len(source_features_list)
+        if L == 0:
+            raise ValueError("source_features_list is empty!")
 
-            # Flatten features if necessary for MMD calculation
-            if src_feat_beta.dim() > 2:
-                src_feat_beta_flat = src_feat_beta.view(src_feat_beta.size(0), -1)
-            else:
-                src_feat_beta_flat = src_feat_beta
+        # 策略：如果有 ≥2 层，用倒数第二层（-2）；否则用最后一层（-1）
+        idx_for_beta_update = -2 if L >= 2 else -1
 
-            if tgt_feat_beta.dim() > 2:
-                tgt_feat_beta_flat = tgt_feat_beta.view(tgt_feat_beta.size(0), -1)
-            else:
-                tgt_feat_beta_flat = tgt_feat_beta
+        # 安全取特征（理论上 now always valid）
+        src_feat_beta = source_features_list[idx_for_beta_update]
+        tgt_feat_beta = target_features_list[idx_for_beta_update]
 
-            # 调用 MK_MMD_Loss 的 update_beta 方法
-            # 使用 detach() 确保 beta 更新过程不影响主网络梯度
-            # print("Calling update_beta from DANAdapter...")
-            self.mmd_loss_fn.update_beta(src_feat_beta_flat.detach(), tgt_feat_beta_flat.detach())
+        # Flatten features if necessary for MMD calculation
+        if src_feat_beta.dim() > 2:
+            src_feat_beta_flat = src_feat_beta.view(src_feat_beta.size(0), -1)
         else:
-            print(f"Warning: Invalid index {idx_for_beta_update} for beta update in DANAdapter.")
+            src_feat_beta_flat = src_feat_beta
 
+        if tgt_feat_beta.dim() > 2:
+            tgt_feat_beta_flat = tgt_feat_beta.view(tgt_feat_beta.size(0), -1)
+        else:
+            tgt_feat_beta_flat = tgt_feat_beta
+
+        # 调用 MK_MMD_Loss 的 update_beta 方法
+        # 使用 detach() 确保 beta 更新过程不影响主网络梯度
+        self.mmd_loss_fn.update_beta(src_feat_beta_flat.detach(), tgt_feat_beta_flat.detach())
         # 计算各层的加权 MMD 损失
         total_weighted_loss = 0.0
         individual_losses = []
@@ -700,12 +709,9 @@ class DANAdapter(nn.Module):
 
             # 调用 MK_MMD_Loss.forward，使用已在循环前更新的固定 beta
             current_loss = self.mmd_loss_fn(src_feat_flat, tgt_feat_flat)
-
-            current_alpha = alphas[i]
-            weighted_loss = current_alpha * current_loss
-            total_weighted_loss += weighted_loss
+            total_weighted_loss += current_loss
             individual_losses.append(current_loss)
-            weights.append(current_alpha)
+            weights.append(torch.tensor(0))
 
 #=======================================调试代码===========================================
         if torch.rand(1).item() < 0.05:  # 随机打印 5% 的 batch
